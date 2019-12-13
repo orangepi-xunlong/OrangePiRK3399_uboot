@@ -28,7 +28,7 @@ RKCHIP_INI_DESC=("CONFIG_TARGET_GVA_RK3229       NA          RK322XAT     NA"
 
 ########################################### User can modify #############################################
 # User's rkbin tool relative path
-RKBIN_TOOLS=../rkbin/tools
+RKBIN_TOOLS=../external/rkbin/tools
 
 # User's GCC toolchain and relative path
 ADDR2LINE_ARM32=arm-linux-gnueabihf-addr2line
@@ -38,7 +38,8 @@ OBJ_ARM64=aarch64-linux-gnu-objdump
 GCC_ARM32=arm-linux-gnueabihf-
 GCC_ARM64=aarch64-linux-gnu-
 TOOLCHAIN_ARM32=../prebuilts/gcc/linux-x86/arm/gcc-linaro-6.3.1-2017.05-x86_64_arm-linux-gnueabihf/bin
-TOOLCHAIN_ARM64=../prebuilts/gcc/linux-x86/aarch64/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin
+#TOOLCHAIN_ARM64=../prebuilts/gcc/linux-x86/aarch64/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin
+TOOLCHAIN_ARM64=../toolchain/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/
 
 ########################################### User not touch #############################################
 BIN_PATH_FIXUP="--replace tools/rk_tools/ ./"
@@ -681,6 +682,17 @@ pack_loader_image()
 	fi
 
 	cd - && mv ${RKBIN}/*_loader_*.bin ./
+
+	local temp=`grep FlashData= ${RKBIN}/RKBOOT/${RKCHIP_LOADER}MINIALL.ini | cut -f 2 -d "="`
+	local flashData=${temp/tools\/rk_tools\//}
+	temp=`grep FlashBoot= ${RKBIN}/RKBOOT/${RKCHIP_LOADER}MINIALL.ini | cut -f 2 -d "="`	
+	local flashBoot=${temp/tools\/rk_tools\//}
+	typeset -l localChip
+	localChip=$RKCHIP
+	${RKTOOLS}/mkimage -n ${localChip} -T rksd -d ${RKBIN}/${flashData} idbloader.img
+	cat ${RKBIN}/${flashBoot} >> idbloader.img
+
+	#    cd - && mv ${RKBIN}/*_loader_*.bin ./ && mv ${RKBIN}/idbloader.img ./
 }
 
 __pack_32bit_trust_image()
