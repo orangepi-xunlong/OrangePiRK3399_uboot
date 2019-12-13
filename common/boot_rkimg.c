@@ -250,11 +250,19 @@ int get_bootdev_type(void)
 			snprintf(boot_options, sizeof(boot_options),
 				 "storagemedia=%s androidboot.storagemedia=%s",
 				 boot_media, boot_media);
-		else
-			snprintf(boot_options, sizeof(boot_options),
-				 "storagemedia=%s androidboot.storagemedia=%s "
-				 "androidboot.mode=normal ",
-				 boot_media, boot_media);
+		else{
+	   		if(! strcmp(boot_media, "emmc"))
+				snprintf(boot_options, sizeof(boot_options),
+					"storagemedia=%s androidboot.storagemedia=%s "
+					"androidboot.mode=normal root=PARTUUID=615e0000-0000",
+					boot_media, boot_media);
+	   		else
+				snprintf(boot_options, sizeof(boot_options),
+					"storagemedia=%s androidboot.storagemedia=%s "
+					"androidboot.mode=normal root=PARTUUID=614e0000-0000",
+					boot_media, boot_media);
+		}
+
 #endif
 		env_update("bootargs", boot_options);
 	}
