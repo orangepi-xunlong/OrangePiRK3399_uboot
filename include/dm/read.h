@@ -113,6 +113,16 @@ fdt_addr_t dev_read_addr_index(struct udevice *dev, int index);
 fdt_addr_t dev_read_addr(struct udevice *dev);
 
 /**
+ * dev_read_addr_ptr() - Get the reg property of a device
+ *                       as a pointer
+ *
+ * @dev: Device to read from
+ *
+ * @return pointer or NULL if not found
+ */
+void *dev_read_addr_ptr(struct udevice *dev);
+
+/**
  * dev_read_addr_size() - get address and size from a device property
  *
  * This does no address translation. It simply reads an property that contains
@@ -155,6 +165,29 @@ const char *dev_read_name(struct udevice *dev);
 int dev_read_stringlist_search(struct udevice *dev, const char *property,
 			  const char *string);
 
+/**
+ * dev_read_string_index() - obtain an indexed string from a string list
+ *
+ * @dev: device to examine
+ * @propname: name of the property containing the string list
+ * @index: index of the string to return
+ * @out: return location for the string
+ *
+ * @return:
+ *   length of string, if found or -ve error value if not found
+ */
+int dev_read_string_index(struct udevice *dev, const char *propname, int index,
+			  const char **outp);
+
+/**
+ * dev_read_string_count() - find the number of strings in a string list
+ *
+ * @dev: device to examine
+ * @propname: name of the property containing the string list
+ * @return:
+ *   number of strings in the list, or -ve error value if not found
+ */
+int dev_read_string_count(struct udevice *dev, const char *propname);
 /**
  * dev_read_phandle_with_args() - Find a node pointed by phandle in a list
  *
@@ -309,6 +342,25 @@ int dev_read_u32_array(struct udevice *dev, const char *propname,
 		       u32 *out_values, size_t sz);
 
 /**
+ * dev_write_u32_array() - Find and write an array of 32 bit integers
+ *
+ * Search for a property in a device node and write 32-bit value(s) to
+ * it.
+ *
+ * The out_values is modified only if a valid u32 value can be decoded.
+ *
+ * @dev: device to look up
+ * @propname:	name of the property to read
+ * @values:	pointer to update value, modified only if return value is 0
+ * @sz:		number of array elements to read
+ * @return 0 on success, -EINVAL if the property does not exist, -ENODATA if
+ * property does not have a value, and -EOVERFLOW if the property data isn't
+ * large enough.
+ */
+int dev_write_u32_array(struct udevice *dev, const char *propname,
+			u32 *values, size_t sz);
+
+/**
  * dev_read_first_subnode() - find the first subnode of a device's node
  *
  * @dev: device to look up
@@ -417,6 +469,11 @@ static inline fdt_addr_t dev_read_addr(struct udevice *dev)
 	return devfdt_get_addr(dev);
 }
 
+static inline void *dev_read_addr_ptr(struct udevice *dev)
+{
+	return devfdt_get_addr_ptr(dev);
+}
+
 static inline fdt_addr_t dev_read_addr_size(struct udevice *dev,
 					    const char *propname,
 					    fdt_size_t *sizep)
@@ -426,6 +483,8 @@ static inline fdt_addr_t dev_read_addr_size(struct udevice *dev,
 
 static inline const char *dev_read_name(struct udevice *dev)
 {
+	if (!dev_of_valid(dev))
+		return NULL;
 	return ofnode_get_name(dev_ofnode(dev));
 }
 
@@ -434,6 +493,19 @@ static inline int dev_read_stringlist_search(struct udevice *dev,
 					     const char *string)
 {
 	return ofnode_stringlist_search(dev_ofnode(dev), propname, string);
+}
+
+static inline int dev_read_string_index(struct udevice *dev,
+					const char *propname, int index,
+					const char **outp)
+{
+	return ofnode_read_string_index(dev_ofnode(dev), propname, index, outp);
+}
+
+static inline int dev_read_string_count(struct udevice *dev,
+					const char *propname)
+{
+	return ofnode_read_string_count(dev_ofnode(dev), propname);
 }
 
 static inline int dev_read_phandle_with_args(struct udevice *dev,
@@ -494,6 +566,8 @@ static inline int dev_read_alias_seq(struct udevice *dev, int *devnump)
 static inline int dev_read_u32_array(struct udevice *dev, const char *propname,
 				     u32 *out_values, size_t sz)
 {
+	if (!dev_of_valid(dev))
+		return -EINVAL;
 	return ofnode_read_u32_array(dev_ofnode(dev), propname, out_values, sz);
 }
 

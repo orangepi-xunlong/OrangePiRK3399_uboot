@@ -3,6 +3,7 @@
  *
  * SPDX-License-Identifier:     GPL-2.0+
  */
+
 #include <common.h>
 #include <dm.h>
 #include <misc.h>
@@ -15,13 +16,14 @@
 #include <u-boot/sha256.h>
 #include <usb.h>
 #include <dwc3-uboot.h>
+#include <spl.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
 #define RK3399_CPUID_OFF  0x7
 #define RK3399_CPUID_LEN  0x10
 
-int board_init(void)
+int rk_board_init(void)
 {
 	struct udevice *pinctrl, *regulator;
 	int ret;
@@ -55,10 +57,6 @@ int board_init(void)
 		debug("%s PWM3 pinctrl init fail!\n", __func__);
 		goto out;
 	}
-
-	ret = regulators_enable_boot_on(false);
-	if (ret)
-		debug("%s: Cannot enable boot on regulator\n", __func__);
 
 	ret = regulator_get_by_platname("vcc5v0_host", &regulator);
 	if (ret) {
@@ -196,6 +194,7 @@ static struct dwc3_device dwc3_device_data = {
 	.dr_mode = USB_DR_MODE_PERIPHERAL,
 	.index = 0,
 	.dis_u2_susphy_quirk = 1,
+	.usb2_phyif_utmi_width = 16,
 };
 
 int usb_gadget_handle_interrupts(void)

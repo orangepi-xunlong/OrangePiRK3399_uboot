@@ -196,6 +196,7 @@
 #define EXT_CSD_HC_WP_GRP_SIZE		221	/* RO */
 #define EXT_CSD_HC_ERASE_GRP_SIZE	224	/* RO */
 #define EXT_CSD_BOOT_MULT		226	/* RO */
+#define EXT_CSD_SEC_FEATURE_SUPPORT     231     /* RO */
 #define EXT_CSD_BKOPS_SUPPORT		502	/* RO */
 
 /*
@@ -273,6 +274,11 @@
 #define MMC_RSP_BUSY	(1 << 3)		/* card may send busy */
 #define MMC_RSP_OPCODE	(1 << 4)		/* response contains opcode */
 
+#define EXT_CSD_SEC_ER_EN      BIT(0)
+#define EXT_CSD_SEC_BD_BLK_EN  BIT(2)
+#define EXT_CSD_SEC_GB_CL_EN   BIT(4)
+#define EXT_CSD_SEC_SANITIZE   BIT(6)  /* v4.5 only */
+
 #define MMC_RSP_NONE	(0)
 #define MMC_RSP_R1	(MMC_RSP_PRESENT|MMC_RSP_CRC|MMC_RSP_OPCODE)
 #define MMC_RSP_R1b	(MMC_RSP_PRESENT|MMC_RSP_CRC|MMC_RSP_OPCODE| \
@@ -299,6 +305,49 @@
 #define MMC_NUM_BOOT_PARTITION	2
 #define MMC_PART_RPMB           3       /* RPMB partition number */
 
+/* Sizes of RPMB data frame */
+#define RPMB_SZ_STUFF		196
+#define RPMB_SZ_MAC		32
+#define RPMB_SZ_DATA		256
+#define RPMB_SZ_NONCE		16
+
+/* Structure of RPMB data frame. */
+struct s_rpmb {
+	unsigned char stuff[RPMB_SZ_STUFF];
+	unsigned char mac[RPMB_SZ_MAC];
+	unsigned char data[RPMB_SZ_DATA];
+	unsigned char nonce[RPMB_SZ_NONCE];
+	unsigned int write_counter;
+	unsigned short address;
+	unsigned short block_count;
+	unsigned short result;
+	unsigned short request;
+} __packed;
+
+struct s_rpmb_verify {
+	unsigned char data[RPMB_SZ_DATA];
+	unsigned char nonce[RPMB_SZ_NONCE];
+	unsigned int write_counter;
+	unsigned short address;
+	unsigned short block_count;
+	unsigned short result;
+	unsigned short request;
+} __packed;
+
+int init_rpmb(void);
+int finish_rpmb(void);
+int do_readcounter(struct s_rpmb *requestpackets);
+int do_programkey(struct s_rpmb *requestpackets);
+int do_authenticatedread(struct s_rpmb *requestpackets, uint16_t block_count);
+int do_authenticatedwrite(struct s_rpmb *requestpackets);
+struct mmc *do_returnmmc(void);
+
+int read_counter(struct mmc *mmc, struct s_rpmb *requestpackets);
+int program_key(struct mmc *mmc, struct s_rpmb *requestpackets);
+int authenticated_read
+	(struct mmc *mmc, struct s_rpmb *requestpackets, uint16_t block_count);
+int authenticated_write(struct mmc *mmc, struct s_rpmb *requestpackets);
+
 /* Driver model support */
 
 /**
@@ -306,6 +355,10 @@
  */
 struct mmc_uclass_priv {
 	struct mmc *mmc;
+};
+
+struct emmc_esr {
+	unsigned int mmc_can_trim;
 };
 
 /**
@@ -513,7 +566,10 @@ struct mmc {
 	uint write_bl_len;
 	uint erase_grp_size;	/* in 512-byte sectors */
 	uint hc_wp_grp_size;	/* in 512-byte sectors */
+	int default_phase;	/* set the default sample clock phase */
+	uint init_retry;        /* re-init mmc when error occur */
 	struct sd_ssr	ssr;	/* SD status register */
+	struct emmc_esr esr;    /* emmc status register */
 	u64 capacity;
 	u64 capacity_user;
 	u64 capacity_boot;
@@ -711,3 +767,4 @@ int mmc_get_env_dev(void);
 struct blk_desc *mmc_get_blk_desc(struct mmc *mmc);
 
 #endif /* _MMC_H_ */
+

@@ -20,6 +20,7 @@ struct pwm_backlight_priv {
 	struct udevice *pwm;
 	uint channel;
 	uint period_ns;
+	bool polarity;
 	uint default_level;
 	uint min_level;
 	uint max_level;
@@ -32,16 +33,24 @@ static int pwm_backlight_enable(struct udevice *dev)
 	uint duty_cycle;
 	int ret;
 
-	plat = dev_get_uclass_platdata(priv->reg);
-	debug("%s: Enable '%s', regulator '%s'/'%s'\n", __func__, dev->name,
-	      priv->reg->name, plat->name);
-	ret = regulator_set_enable(priv->reg, true);
+	if (priv->reg) {
+		plat = dev_get_uclass_platdata(priv->reg);
+		debug("%s: Enable '%s', regulator '%s'/'%s'\n", __func__,
+		      dev->name, priv->reg->name, plat->name);
+		ret = regulator_set_enable(priv->reg, true);
+		if (ret) {
+			debug("%s: Cannot enable regulator for PWM '%s'\n",
+			      __func__, dev->name);
+			return ret;
+		}
+		mdelay(120);
+	}
+
+	ret = pwm_set_invert(priv->pwm, priv->channel, priv->polarity);
 	if (ret) {
-		debug("%s: Cannot enable regulator for PWM '%s'\n", __func__,
-		      dev->name);
+		dev_err(dev, "Failed to invert PWM\n");
 		return ret;
 	}
-	mdelay(120);
 
 	duty_cycle = priv->period_ns * (priv->default_level - priv->min_level) /
 		(priv->max_level - priv->min_level + 1);
@@ -53,7 +62,9 @@ static int pwm_backlight_enable(struct udevice *dev)
 	if (ret)
 		return ret;
 	mdelay(10);
-	dm_gpio_set_value(&priv->enable, 1);
+
+	if (dm_gpio_is_valid(&priv->enable))
+		dm_gpio_set_value(&priv->enable, 1);
 
 	return 0;
 }
@@ -62,32 +73,38 @@ static int pwm_backlight_disable(struct udevice *dev)
 {
 	struct pwm_backlight_priv *priv = dev_get_priv(dev);
 	struct dm_regulator_uclass_platdata *plat;
-	uint duty_cycle;
 	int ret;
 
-	duty_cycle = priv->period_ns * (priv->default_level - priv->min_level) /
-		(priv->max_level - priv->min_level + 1);
-	ret = pwm_set_config(priv->pwm, priv->channel, priv->period_ns,
-			     duty_cycle);
+	ret = pwm_set_config(priv->pwm, priv->channel, priv->period_ns, 0);
 	if (ret)
 		return ret;
 
-	ret = pwm_set_enable(priv->pwm, priv->channel, false);
-	if (ret)
-		return ret;
+	/*
+	 * Sometimes there is not "enable-gpios", we have to set pwm output
+	 * 0% or 100% duty to play role like "enable-gpios", so we should not
+	 * disable pwm, let's keep it enabled.
+	 */
+	if (dm_gpio_is_valid(&priv->enable)) {
+		ret = pwm_set_enable(priv->pwm, priv->channel, false);
+		if (ret)
+			return ret;
+	}
 
 	mdelay(10);
-	dm_gpio_set_value(&priv->enable, 0);
+	if (dm_gpio_is_valid(&priv->enable))
+		dm_gpio_set_value(&priv->enable, 0);
 
-	plat = dev_get_uclass_platdata(priv->reg);
-	printf("%s: Disable '%s', regulator '%s'/'%s'\n", __func__, dev->name,
-	      priv->reg->name, plat->name);
-	ret = regulator_set_enable(priv->reg, false);
-	if (ret) {
-		debug("%s: Cannot enable regulator for PWM '%s'\n", __func__,
-		      dev->name);
+	if (priv->reg) {
+		plat = dev_get_uclass_platdata(priv->reg);
+		debug("%s: Disable '%s', regulator '%s'/'%s'\n", __func__,
+		      dev->name, priv->reg->name, plat->name);
+		ret = regulator_set_enable(priv->reg, false);
+		if (ret) {
+			debug("%s: Cannot enable regulator for PWM '%s'\n",
+			      __func__, dev->name);
+		}
+		mdelay(120);
 	}
-	mdelay(120);
 
 	return 0;
 }
@@ -102,10 +119,8 @@ static int pwm_backlight_ofdata_to_platdata(struct udevice *dev)
 	debug("%s: start\n", __func__);
 	ret = uclass_get_device_by_phandle(UCLASS_REGULATOR, dev,
 					   "power-supply", &priv->reg);
-	if (ret) {
+	if (ret)
 		debug("%s: Cannot get power supply: ret=%d\n", __func__, ret);
-		return ret;
-	}
 	ret = gpio_request_by_name(dev, "enable-gpios", 0, &priv->enable,
 				   GPIOD_IS_OUT);
 	if (ret) {
@@ -128,6 +143,7 @@ static int pwm_backlight_ofdata_to_platdata(struct udevice *dev)
 	}
 	priv->channel = args.args[0];
 	priv->period_ns = args.args[1];
+	priv->polarity = args.args[2];
 
 	index = dev_read_u32_default(dev, "default-brightness-level", 255);
 	cell = dev_read_prop(dev, "brightness-levels", &len);
@@ -135,6 +151,9 @@ static int pwm_backlight_ofdata_to_platdata(struct udevice *dev)
 	if (cell && count > index) {
 		priv->default_level = fdt32_to_cpu(cell[index]);
 		priv->max_level = fdt32_to_cpu(cell[count - 1]);
+		/* Rockchip dts may use a invert sequence level array */
+		if(fdt32_to_cpu(cell[0]) > priv->max_level)
+			priv->max_level = fdt32_to_cpu(cell[0]);
 	} else {
 		priv->default_level = index;
 		priv->max_level = 255;

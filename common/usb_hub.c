@@ -57,7 +57,7 @@ struct usb_device_scan {
 
 static LIST_HEAD(usb_scan_list);
 
-__weak void usb_hub_reset_devices(int port)
+__weak void usb_hub_reset_devices(struct usb_hub_device *hub, int port)
 {
 	return;
 }
@@ -489,6 +489,17 @@ static int usb_scan_port(struct usb_device_scan *usb_scan)
 		return 0;
 	}
 
+	if (portchange & USB_PORT_STAT_C_RESET) {
+		debug("port %d reset change\n", i + 1);
+		usb_clear_port_feature(dev, i + 1, USB_PORT_FEAT_C_RESET);
+	}
+
+	if ((portchange & USB_SS_PORT_STAT_C_BH_RESET) &&
+	    usb_hub_is_superspeed(dev)) {
+		debug("port %d BH reset change\n", i + 1);
+		usb_clear_port_feature(dev, i + 1, USB_SS_PORT_FEAT_C_BH_RESET);
+	}
+
 	/* A new USB device is ready at this point */
 	debug("devnum=%d port=%d: USB dev found\n", dev->devnum, i + 1);
 
@@ -541,11 +552,6 @@ static int usb_scan_port(struct usb_device_scan *usb_scan)
 		/* Otherwise the device will get removed */
 		printf("Port %d over-current occurred %d times\n", i + 1,
 		       hub->overcurrent_count[i]);
-	}
-
-	if (portchange & USB_PORT_STAT_C_RESET) {
-		debug("port %d reset change\n", i + 1);
-		usb_clear_port_feature(dev, i + 1, USB_PORT_FEAT_C_RESET);
 	}
 
 	/*
@@ -619,7 +625,7 @@ static int usb_hub_configure(struct usb_device *dev)
 	short hubCharacteristics;
 	struct usb_hub_descriptor *descriptor;
 	struct usb_hub_device *hub;
-	__maybe_unused struct usb_hub_status *hubsts;
+	struct usb_hub_status *hubsts;
 	int ret;
 
 	hub = usb_get_hub_device(dev);
@@ -773,9 +779,7 @@ static int usb_hub_configure(struct usb_device *dev)
 		return ret;
 	}
 
-#ifdef DEBUG
 	hubsts = (struct usb_hub_status *)buffer;
-#endif
 
 	debug("get_hub_status returned status %X, change %X\n",
 	      le16_to_cpu(hubsts->wHubStatus),
@@ -847,7 +851,7 @@ static int usb_hub_configure(struct usb_device *dev)
 	 * should occur in the board file of the device.
 	 */
 	for (i = 0; i < dev->maxchild; i++)
-		usb_hub_reset_devices(i + 1);
+		usb_hub_reset_devices(hub, i + 1);
 
 	/*
 	 * Only add the connected USB devices, including potential hubs,

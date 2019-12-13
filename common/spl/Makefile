@@ -8,8 +8,17 @@
 # Based on common/Makefile.
 #
 
+ifeq ($(CONFIG_TPL_BUILD), y)
+ifndef CONFIG_TPL_TINY_FRAMEWORK
+obj-$(CONFIG_SPL_FRAMEWORK) += spl.o
+endif
+else
 ifdef CONFIG_SPL_BUILD
 obj-$(CONFIG_SPL_FRAMEWORK) += spl.o
+endif
+endif
+
+ifdef CONFIG_SPL_BUILD
 obj-$(CONFIG_$(SPL_TPL_)BOOTROM_SUPPORT) += spl_bootrom.o
 obj-$(CONFIG_$(SPL_TPL_)LOAD_FIT) += spl_fit.o
 obj-$(CONFIG_$(SPL_TPL_)NOR_SUPPORT) += spl_nor.o
@@ -22,8 +31,9 @@ endif
 obj-$(CONFIG_$(SPL_TPL_)UBI) += spl_ubi.o
 obj-$(CONFIG_$(SPL_TPL_)NET_SUPPORT) += spl_net.o
 obj-$(CONFIG_$(SPL_TPL_)MMC_SUPPORT) += spl_mmc.o
-obj-$(CONFIG_$(SPL_TPL_)ATF_SUPPORT) += spl_atf.o
-obj-$(CONFIG_$(SPL_TPL_)OPTEE_SUPPORT) += spl_optee.o
+obj-$(CONFIG_$(SPL_TPL_)ATF) += spl_atf.o
+obj-$(CONFIG_$(SPL_TPL_)OPTEE) += spl_optee.o
+obj-$(CONFIG_$(SPL_TPL_)LOAD_RKFW) += spl_rkfw.o
 obj-$(CONFIG_$(SPL_TPL_)USB_SUPPORT) += spl_usb.o
 obj-$(CONFIG_$(SPL_TPL_)FAT_SUPPORT) += spl_fat.o
 obj-$(CONFIG_$(SPL_TPL_)EXT_SUPPORT) += spl_ext.o

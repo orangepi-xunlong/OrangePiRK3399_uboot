@@ -16,13 +16,14 @@
 #define VOP_MINOR(version) 	((version) & 0xff)
 
 #define VOP_REG_SUPPORT(vop, reg) \
-		(!reg.major || (reg.major == VOP_MAJOR(vop->version) && \
-		reg.begin_minor <= VOP_MINOR(vop->version) && \
-		reg.end_minor >= VOP_MINOR(vop->version) && \
-		reg.mask))
+		(reg.mask && \
+		 (!reg.major || \
+		  (reg.major == VOP_MAJOR(vop->version) && \
+		   reg.begin_minor <= VOP_MINOR(vop->version) && \
+		   reg.end_minor >= VOP_MINOR(vop->version))))
 
 #define VOP_WIN_SUPPORT(vop, win, name) \
-		VOP_REG_SUPPORT(vop, win->phy->name)
+		VOP_REG_SUPPORT(vop, win->name)
 
 #define VOP_CTRL_SUPPORT(vop, name) \
 		VOP_REG_SUPPORT(vop, vop->ctrl->name)
@@ -57,12 +58,23 @@
 		REG_SET(x, name, 0, (x)->ctrl->name, v)
 #define VOP_LINE_FLAG_SET(x, name, v) \
 		REG_SET(x, name, 0, (x)->line_flag->name, v)
+#define VOP_WIN_CSC_SET(x, name, v) \
+		REG_SET(x, name, 0, (x)->win_csc->name, v)
 
 #define VOP_CTRL_GET(x, name) \
 		vop_read_reg(x, 0, &vop->ctrl->name)
 
 #define VOP_WIN_GET(x, name) \
 		vop_read_reg(x, vop->win->offset, &vop->win->name)
+
+#define VOP_GRF_SET(vop, name, v) \
+	do { \
+		if (vop->grf_ctrl) { \
+			vop_grf_writel(vop, vop->grf_ctrl->name, v); \
+		} \
+	} while (0)
+
+#define CVBS_PAL_VDISPLAY              288
 
 enum alpha_mode {
 	ALPHA_STRAIGHT,
@@ -127,6 +139,18 @@ enum dither_down_mode_sel {
 	DITHER_DOWN_ALLEGRO = 0x0,
 	DITHER_DOWN_FRC = 0x1
 };
+
+enum vop_csc_format {
+	CSC_BT601L,
+	CSC_BT709L,
+	CSC_BT601F,
+	CSC_BT2020,
+};
+
+#define DSP_BG_SWAP		0x1
+#define DSP_RB_SWAP		0x2
+#define DSP_RG_SWAP		0x4
+#define DSP_DELTA_SWAP		0x8
 
 #define PRE_DITHER_DOWN_EN(x)	((x) << 0)
 #define DITHER_DOWN_EN(x)	((x) << 1)
@@ -218,6 +242,8 @@ struct vop_reg {
 
 struct vop_ctrl {
 	struct vop_reg standby;
+	struct vop_reg axi_outstanding_max_num;
+	struct vop_reg axi_max_outstanding_en;
 	struct vop_reg htotal_pw;
 	struct vop_reg hact_st_end;
 	struct vop_reg vtotal_pw;
@@ -238,22 +264,39 @@ struct vop_ctrl {
 	struct vop_reg core_dclk_div;
 	struct vop_reg dclk_ddr;
 	struct vop_reg p2i_en;
+	struct vop_reg hdmi_dclk_out_en;
 	struct vop_reg rgb_en;
+	struct vop_reg lvds_en;
 	struct vop_reg edp_en;
 	struct vop_reg hdmi_en;
 	struct vop_reg mipi_en;
 	struct vop_reg data01_swap;
 	struct vop_reg mipi_dual_channel_en;
 	struct vop_reg dp_en;
+	struct vop_reg dclk_pol;
 	struct vop_reg pin_pol;
+	struct vop_reg rgb_dclk_pol;
 	struct vop_reg rgb_pin_pol;
+	struct vop_reg lvds_dclk_pol;
+	struct vop_reg lvds_pin_pol;
+	struct vop_reg hdmi_dclk_pol;
 	struct vop_reg hdmi_pin_pol;
+	struct vop_reg edp_dclk_pol;
 	struct vop_reg edp_pin_pol;
+	struct vop_reg mipi_dclk_pol;
 	struct vop_reg mipi_pin_pol;
+	struct vop_reg dp_dclk_pol;
 	struct vop_reg dp_pin_pol;
 
 	struct vop_reg dither_up;
 	struct vop_reg dither_down;
+
+	struct vop_reg sw_dac_sel;
+	struct vop_reg tve_sw_mode;
+	struct vop_reg tve_dclk_pol;
+	struct vop_reg tve_dclk_en;
+	struct vop_reg sw_genlock;
+	struct vop_reg sw_uv_offset_en;
 
 	struct vop_reg dsp_out_yuv;
 	struct vop_reg dsp_data_swap;
@@ -270,7 +313,54 @@ struct vop_ctrl {
 	struct vop_reg ymirror;
 	struct vop_reg dsp_background;
 
+	/* CABC */
+	struct vop_reg cabc_total_num;
+	struct vop_reg cabc_config_mode;
+	struct vop_reg cabc_stage_up_mode;
+	struct vop_reg cabc_scale_cfg_value;
+	struct vop_reg cabc_scale_cfg_enable;
+	struct vop_reg cabc_global_dn_limit_en;
+	struct vop_reg cabc_lut_en;
+	struct vop_reg cabc_en;
+	struct vop_reg cabc_handle_en;
+	struct vop_reg cabc_stage_up;
+	struct vop_reg cabc_stage_down;
+	struct vop_reg cabc_global_dn;
+	struct vop_reg cabc_calc_pixel_num;
+
 	struct vop_reg win_gate[4];
+	struct vop_reg win_channel[4];
+
+	/* BCSH */
+	struct vop_reg bcsh_brightness;
+	struct vop_reg bcsh_contrast;
+	struct vop_reg bcsh_sat_con;
+	struct vop_reg bcsh_sin_hue;
+	struct vop_reg bcsh_cos_hue;
+	struct vop_reg bcsh_r2y_csc_mode;
+	struct vop_reg bcsh_r2y_en;
+	struct vop_reg bcsh_y2r_csc_mode;
+	struct vop_reg bcsh_y2r_en;
+	struct vop_reg bcsh_color_bar;
+	struct vop_reg bcsh_out_mode;
+	struct vop_reg bcsh_en;
+	struct vop_reg reg_done_frm;
+
+	/* MCU OUTPUT */
+	struct vop_reg mcu_pix_total;
+	struct vop_reg mcu_cs_pst;
+	struct vop_reg mcu_cs_pend;
+	struct vop_reg mcu_rw_pst;
+	struct vop_reg mcu_rw_pend;
+	struct vop_reg mcu_clk_sel;
+	struct vop_reg mcu_hold_mode;
+	struct vop_reg mcu_frame_st;
+	struct vop_reg mcu_rs;
+	struct vop_reg mcu_bypass;
+	struct vop_reg mcu_type;
+	struct vop_reg mcu_rw_bypass_port;
+
+
 	struct vop_reg cfg_done;
 };
 
@@ -332,6 +422,32 @@ struct vop_line_flag {
 	struct vop_reg line_flag_num[2];
 };
 
+struct vop_grf_ctrl {
+	struct vop_reg grf_dclk_inv;
+};
+
+struct vop_rect {
+	int width;
+	int height;
+};
+
+struct vop_csc_table {
+	const uint32_t *r2y_bt601;
+	const uint32_t *r2y_bt601_12_235;
+	const uint32_t *r2y_bt709;
+	const uint32_t *r2y_bt2020;
+};
+
+struct vop_csc {
+	struct vop_reg y2r_en;
+	struct vop_reg r2r_en;
+	struct vop_reg r2y_en;
+
+	uint32_t y2r_offset;
+	uint32_t r2r_offset;
+	uint32_t r2y_offset;
+};
+
 #define VOP_FEATURE_OUTPUT_10BIT	BIT(0)
 
 struct vop_data {
@@ -339,20 +455,29 @@ struct vop_data {
 	const struct vop_ctrl *ctrl;
 	const struct vop_win *win;
 	const struct vop_line_flag *line_flag;
+	const struct vop_grf_ctrl *grf_ctrl;
+	const struct vop_csc_table *csc_table;
+	const struct vop_csc *win_csc;
 	int win_offset;
 	int reg_len;
 	u64 feature;
+	struct vop_rect max_output;
 };
 
 struct vop {
 	u32 *regsbak;
 	void *regs;
+	void *grf;
 
 	uint32_t version;
 	const struct vop_ctrl *ctrl;
 	const struct vop_win *win;
 	const struct vop_line_flag *line_flag;
+	const struct vop_grf_ctrl *grf_ctrl;
+	const struct vop_csc_table *csc_table;
+	const struct vop_csc *win_csc;
 	int win_offset;
+	struct vop_rect max_output;
 };
 
 static inline void vop_writel(struct vop *vop, uint32_t offset, uint32_t v)
@@ -394,6 +519,16 @@ static inline void vop_mask_write(struct vop *vop, uint32_t offset,
 static inline void vop_cfg_done(struct vop *vop)
 {
 	VOP_CTRL_SET(vop, cfg_done, 1);
+}
+
+static inline void vop_grf_writel(struct vop *vop, struct vop_reg reg, u32 v)
+{
+	u32 val = 0;
+
+	if (VOP_REG_SUPPORT(vop, reg)) {
+		val = (v << reg.shift) | (reg.mask << (reg.shift + 16));
+		writel(val, vop->grf + reg.offset);
+	}
 }
 
 /**

@@ -308,7 +308,26 @@ ulong mmc_bread(struct blk_desc *block_dev, lbaint_t start, lbaint_t blkcnt,
 			mmc->cfg->b_max : blocks_todo;
 		if (mmc_read_blocks(mmc, dst, start, cur) != cur) {
 			debug("%s: Failed to read blocks\n", __func__);
-			return 0;
+			int timeout = 0;
+re_init_retry:
+			timeout++;
+			/*
+			 * Try re-init seven times.
+			 */
+			if (timeout > 7) {
+				printf("Re-init retry timeout\n");
+				return 0;
+			}
+
+			mmc->has_init = 0;
+			if (mmc_init(mmc))
+				return 0;
+
+			if (mmc_read_blocks(mmc, dst, start, cur) != cur) {
+				printf("%s: Re-init mmc_read_blocks error\n",
+				       __func__);
+				goto re_init_retry;
+			}
 		}
 		blocks_todo -= cur;
 		start += cur;
@@ -543,7 +562,7 @@ static int mmc_send_ext_csd(struct mmc *mmc, u8 *ext_csd)
 	return err;
 }
 
-static int mmc_poll_for_busy(struct mmc *mmc)
+static int mmc_poll_for_busy(struct mmc *mmc, u8 send_status)
 {
 	struct mmc_cmd cmd;
 	u8 busy = true;
@@ -557,8 +576,13 @@ static int mmc_poll_for_busy(struct mmc *mmc)
 
 	start = get_timer(0);
 
+	if (!send_status && !mmc_can_card_busy(mmc)) {
+		mdelay(timeout);
+		return 0;
+	}
+
 	do {
-		if (mmc_can_card_busy(mmc)) {
+		if (!send_status) {
 			busy = mmc_card_busy(mmc);
 		} else {
 			ret = mmc_send_cmd(mmc, &cmd, NULL);
@@ -595,8 +619,8 @@ static int __mmc_switch(struct mmc *mmc, u8 set, u8 index, u8 value,
 	do {
 		ret = mmc_send_cmd(mmc, &cmd, NULL);
 
-		if (!ret && send_status)
-			return mmc_poll_for_busy(mmc);
+		if (!ret)
+			return mmc_poll_for_busy(mmc, send_status);
 	} while (--retries > 0 && ret);
 
 	return ret;
@@ -820,7 +844,6 @@ static int mmc_select_hs_ddr(struct mmc *mmc)
 static int mmc_select_hs200(struct mmc *mmc)
 {
 	int ret;
-	struct mmc_cmd cmd;
 
 	/*
 	 * Set the bus width(4 or 8) with host's support and
@@ -837,18 +860,6 @@ static int mmc_select_hs200(struct mmc *mmc)
 			return ret;
 
 		mmc_set_timing(mmc, MMC_TIMING_MMC_HS200);
-
-		cmd.cmdidx = MMC_CMD_SEND_STATUS;
-		cmd.resp_type = MMC_RSP_R1;
-		cmd.cmdarg = mmc->rca << 16;
-
-		ret = mmc_send_cmd(mmc, &cmd, NULL);
-
-		if (ret)
-			return ret;
-
-		if (cmd.response[0] & MMC_STATUS_SWITCH_ERROR)
-			return -EBADMSG;
 	}
 
 	return ret;
@@ -1730,6 +1741,8 @@ static int mmc_startup(struct mmc *mmc)
 		if (part_completed &&
 		    (ext_csd[EXT_CSD_PARTITIONING_SUPPORT] & ENHNCD_SUPPORT))
 			mmc->part_attr = ext_csd[EXT_CSD_PARTITIONS_ATTRIBUTE];
+		if (ext_csd[EXT_CSD_SEC_FEATURE_SUPPORT] & EXT_CSD_SEC_GB_CL_EN)
+			mmc->esr.mmc_can_trim = 1;
 
 		mmc->capacity_boot = ext_csd[EXT_CSD_BOOT_MULT] << 17;
 

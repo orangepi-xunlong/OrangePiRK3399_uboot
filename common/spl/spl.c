@@ -10,6 +10,7 @@
 #include <common.h>
 #include <dm.h>
 #include <spl.h>
+#include <asm/sections.h>
 #include <asm/u-boot.h>
 #include <nand.h>
 #include <fat.h>
@@ -154,11 +155,11 @@ int spl_parse_image_header(struct spl_image_info *spl_image,
 		spl_image->os = image_get_os(header);
 		spl_image->name = image_get_name(header);
 		debug("spl: payload image: %.*s load addr: 0x%lx size: %d\n",
-			(int)sizeof(spl_image->name), spl_image->name,
+			IH_NMLEN, spl_image->name,
 			spl_image->load_addr, spl_image->size);
 #else
 		/* LEGACY image not supported */
-		debug("Legacy boot image support not enabled, proceeding to other boot methods");
+		debug("Legacy boot image support not enabled, proceeding to other boot methods\n");
 		return -EINVAL;
 #endif
 	} else {
@@ -196,7 +197,7 @@ int spl_parse_image_header(struct spl_image_info *spl_image,
 		spl_set_header_raw_uboot(spl_image);
 #else
 		/* RAW image not supported, proceed to other boot methods. */
-		debug("Raw boot image support not enabled, proceeding to other boot methods");
+		debug("Raw boot image support not enabled, proceeding to other boot methods\n");
 		return -EINVAL;
 #endif
 	}
@@ -258,6 +259,34 @@ static int spl_common_init(bool setup_malloc)
 	return 0;
 }
 
+#if !defined(CONFIG_SPL_SKIP_RELOCATE) && !defined(CONFIG_TPL_BUILD)
+static void spl_setup_relocate(void)
+{
+	gd->relocaddr = CONFIG_SPL_RELOC_TEXT_BASE;
+	gd->new_gd = (gd_t *)gd;
+	gd->start_addr_sp = gd->relocaddr;
+	gd->fdt_size = ALIGN(fdt_totalsize(gd->fdt_blob) + 0x1000, 32);
+
+	gd->start_addr_sp -= gd->fdt_size;
+	gd->new_fdt = (void *)gd->start_addr_sp;
+	memcpy(gd->new_fdt, gd->fdt_blob, gd->fdt_size);
+	gd->fdt_blob = gd->new_fdt;
+
+	gd->reloc_off = gd->relocaddr - (unsigned long)__image_copy_start;
+}
+#else
+static void spl_setup_relocate(void)
+{
+
+}
+#endif
+
+void spl_set_bd(void)
+{
+	if (!gd->bd)
+		gd->bd = &bdata;
+}
+
 int spl_early_init(void)
 {
 	int ret;
@@ -266,6 +295,8 @@ int spl_early_init(void)
 	if (ret)
 		return ret;
 	gd->flags |= GD_FLG_SPL_EARLY_INIT;
+
+	spl_setup_relocate();
 
 	return 0;
 }
@@ -353,6 +384,34 @@ static int boot_from_devices(struct spl_image_info *spl_image,
 	return -ENODEV;
 }
 
+#if defined(CONFIG_DM) && !defined(CONFIG_SPL_SKIP_RELOCATE) && !defined(CONFIG_TPL_BUILD)
+static int spl_initr_dm(void)
+{
+	int ret;
+
+	/* Save the pre-reloc driver model and start a new one */
+	gd->dm_root_f = gd->dm_root;
+	gd->dm_root = NULL;
+	bootstage_start(BOOTSTATE_ID_ACCUM_DM_R, "dm_r");
+	ret = dm_init_and_scan(false);
+	bootstage_accum(BOOTSTATE_ID_ACCUM_DM_R);
+	if (ret)
+		return ret;
+
+#if defined(CONFIG_TIMER)
+	gd->timer = NULL;
+#endif
+	serial_init();
+
+	return 0;
+}
+#else
+static int spl_initr_dm(void)
+{
+	return 0;
+}
+#endif
+
 void board_init_r(gd_t *dummy1, ulong dummy2)
 {
 	u32 spl_boot_list[] = {
@@ -365,7 +424,11 @@ void board_init_r(gd_t *dummy1, ulong dummy2)
 	struct spl_image_info spl_image;
 
 	debug(">>spl:board_init_r()\n");
-	gd->bd = &bdata;
+
+	spl_initr_dm();
+
+	spl_set_bd();
+
 #ifdef CONFIG_SPL_OS_BOOT
 	dram_init_banksize();
 #endif
@@ -387,11 +450,21 @@ void board_init_r(gd_t *dummy1, ulong dummy2)
 	timer_init();
 #endif
 
-#ifdef CONFIG_SPL_BOARD_INIT
+#if CONFIG_IS_ENABLED(BOARD_INIT)
 	spl_board_init();
 #endif
 
 	memset(&spl_image, '\0', sizeof(spl_image));
+
+#if CONFIG_IS_ENABLED(ATF)
+	/*
+	 * Bl32 ep is optional, initial it as an invalid value.
+	 * BL33 ep is mandatory, but initial it as a default value is better.
+	 */
+	spl_image.entry_point_bl32 = -1;
+	spl_image.entry_point_bl33 = CONFIG_SYS_TEXT_BASE;
+#endif
+
 #ifdef CONFIG_SYS_SPL_ARGS_ADDR
 	spl_image.arg = (void *)CONFIG_SYS_SPL_ARGS_ADDR;
 #endif
@@ -410,6 +483,19 @@ void board_init_r(gd_t *dummy1, ulong dummy2)
 	case IH_OS_U_BOOT:
 		debug("Jumping to U-Boot\n");
 		break;
+#if CONFIG_IS_ENABLED(ATF)
+	case IH_OS_ARM_TRUSTED_FIRMWARE:
+		printf("Jumping to U-Boot via ARM Trusted Firmware\n\n");
+		spl_invoke_atf(&spl_image);
+		break;
+#endif
+#if CONFIG_IS_ENABLED(OPTEE)
+	case IH_OS_OP_TEE:
+		debug("Jumping to U-Boot via OP-TEE\n");
+		spl_optee_entry(NULL, NULL, (void *)spl_image.fdt_addr,
+				(void *)spl_image.entry_point);
+		break;
+#endif
 #ifdef CONFIG_SPL_OS_BOOT
 	case IH_OS_LINUX:
 		debug("Jumping to Linux\n");
@@ -424,6 +510,8 @@ void board_init_r(gd_t *dummy1, ulong dummy2)
 	debug("SPL malloc() used %#lx bytes (%ld KB)\n", gd->malloc_ptr,
 	      gd->malloc_ptr / 1024);
 #endif
+
+	debug("loaded - jumping to U-Boot...\n");
 #ifdef CONFIG_BOOTSTAGE_STASH
 	int ret;
 
@@ -433,16 +521,6 @@ void board_init_r(gd_t *dummy1, ulong dummy2)
 	if (ret)
 		debug("Failed to stash bootstage: err=%d\n", ret);
 #endif
-
-	if (CONFIG_IS_ENABLED(ATF_SUPPORT)) {
-		debug("loaded - jumping to U-Boot via ATF BL31.\n");
-		spl_bl31_entry((void *)spl_image.entry_point);
-	}
-
-	if (CONFIG_IS_ENABLED(OPTEE_SUPPORT)) {
-		debug("loaded - jumping to U-Boot via OP-TEE.\n");
-		spl_optee_entry(0, 0, 0, (void *)spl_image.entry_point);
-	}
 
 	debug("loaded - jumping to U-Boot...\n");
 	spl_board_prepare_for_boot();

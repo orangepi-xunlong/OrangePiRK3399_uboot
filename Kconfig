@@ -14,6 +14,12 @@ source "arch/Kconfig"
 
 menu "General setup"
 
+config BROKEN
+	bool
+	help
+	  This option cannot be enabled. It is used as dependency
+	  for broken and incomplete features.
+
 config LOCALVERSION
 	string "Local version - append to U-Boot release"
 	help
@@ -127,7 +133,7 @@ menuconfig EXPERT
 if EXPERT
 	config SYS_MALLOC_CLEAR_ON_INIT
 	bool "Init with zeros the memory reserved for malloc (slow)"
-	default y
+	default y if !ARCH_ROCKCHIP
 	help
 	  This setting is enabled by default. The reserved malloc
 	  memory is initialized with zeros, so first malloc calls
@@ -273,7 +279,7 @@ config SPL_LOAD_FIT
 
 config SPL_FIT_IMAGE_POST_PROCESS
 	bool "Enable post-processing of FIT artifacts after loading by the SPL"
-	depends on SPL_LOAD_FIT && TI_SECURE_DEVICE
+	depends on SPL_LOAD_FIT
 	help
 	  Allows doing any sort of manipulation to blobs after they got extracted
 	  from the U-Boot FIT image like stripping off headers or modifying the
@@ -398,5 +404,3 @@ source "fs/Kconfig"
 source "lib/Kconfig"
 
 source "test/Kconfig"
-
-source "scripts/Kconfig"

@@ -53,7 +53,7 @@ int rkcommon_get_spl_size(struct image_tool_params *params);
  * @file_size:	Size of the file we want the boot ROM to load, in bytes
  * @return 0 if OK, -ENOSPC if too large
  */
-int rkcommon_set_header(void *buf, uint file_size,
+int rkcommon_set_header(void *buf, uint file_size, uint max_size,
 			struct image_tool_params *params);
 
 /**

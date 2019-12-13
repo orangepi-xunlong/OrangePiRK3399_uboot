@@ -14,12 +14,10 @@ static void show_devices(struct udevice *dev, int depth, int last_flag)
 {
 	int i, is_last;
 	struct udevice *child;
-	char class_name[12];
 
 	/* print the first 11 characters to not break the tree-format. */
-	strlcpy(class_name, dev->uclass->uc_drv->name, sizeof(class_name));
-	printf(" %-11s [ %c ]    ", class_name,
-	       dev->flags & DM_FLAG_ACTIVATED ? '+' : ' ');
+	printf(" %-10.10s [ %c ]   %-25.25s  ", dev->uclass->uc_drv->name,
+	       dev->flags & DM_FLAG_ACTIVATED ? '+' : ' ', dev->driver->name);
 
 	for (i = depth; i >= 0; i--) {
 		is_last = (last_flag >> i) & 1;
@@ -36,7 +34,8 @@ static void show_devices(struct udevice *dev, int depth, int last_flag)
 		}
 	}
 
-	printf("%s\n", dev->name);
+	printf("%s %s\n", dev->name,
+	       dev_read_bool(dev, "u-boot,dm-pre-reloc") ? "*" : "");
 
 	list_for_each_entry(child, &dev->child_head, sibling_node) {
 		is_last = list_is_last(&child->sibling_node, &dev->child_head);
@@ -50,8 +49,8 @@ void dm_dump_all(void)
 
 	root = dm_root();
 	if (root) {
-		printf(" Class       Probed   Name\n");
-		printf("----------------------------------------\n");
+		printf(" Class      Probed        Driver               Name\n");
+		printf("----------------------------------------------------------\n");
 		show_devices(root, -1, 0);
 	}
 }

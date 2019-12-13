@@ -115,6 +115,10 @@
 #define RX_WMARK_SHIFT		16
 #define RX_WMARK_MASK		(0xfff << RX_WMARK_SHIFT)
 
+/* HCON Register */
+#define DMA_INTERFACE_IDMA		(0x0)
+#define SDMMC_GET_TRANS_MODE(x)		(((x)>>16) & 0x3)
+
 #define DWMCI_IDMAC_OWN		(1 << 31)
 #define DWMCI_IDMAC_CH		(1 << 4)
 #define DWMCI_IDMAC_FS		(1 << 3)
@@ -130,6 +134,12 @@
 
 /* quirks */
 #define DWMCI_QUIRK_DISABLE_SMU		(1 << 0)
+
+/*
+ * DWMCI_MSIZE is uses to set burst size of multiple transaction.
+ * The burst size is set to 128 if DWMCI_MSIZE is set to 0x6.
+ */
+#define DWMCI_MSIZE    0x6
 
 /**
  * struct dwmci_host - Information about a designware MMC host

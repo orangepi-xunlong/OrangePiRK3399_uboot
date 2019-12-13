@@ -10,35 +10,28 @@
 #include "rockchip-common.h"
 
 #define CONFIG_SKIP_LOWLEVEL_INIT
-#define CONFIG_SYS_MALLOC_LEN		(32 << 20)
-#define CONFIG_SYS_CBSIZE		1024
+#define CONFIG_SYS_MALLOC_LEN		(128 << 20)
+#define CONFIG_SYS_CBSIZE		2048
 #define CONFIG_SYS_BOOTM_LEN	(64 << 20)	/*  64M */
 
-#define CONFIG_SYS_TIMER_RATE		(24 * 1000 * 1000)
-#define CONFIG_SYS_TIMER_BASE		0x110c00a0 /* TIMER5 */
-#define CONFIG_SYS_TIMER_COUNTER	(CONFIG_SYS_TIMER_BASE + 8)
 
 #define CONFIG_SPL_FRAMEWORK
-#define CONFIG_SYS_NS16550_MEM32
-#define CONFIG_SYS_TEXT_BASE		0x61000000
-#define CONFIG_SYS_INIT_SP_ADDR		0x61100000
+#define CONFIG_SYS_TEXT_BASE		0x60200000
+#define CONFIG_SYS_INIT_SP_ADDR		0x60400000
 #define CONFIG_SYS_LOAD_ADDR		0x61800800
 #define CONFIG_SPL_TEXT_BASE		0x60000000
-
-#define CONFIG_TPL_STACK		0x10088000
-#define CONFIG_TPL_TEXT_BASE		0x10081004
 
 #define GICD_BASE                 	0x32011000
 #define GICC_BASE                  	0x32012000
 
 #define CONFIG_ROCKCHIP_MAX_INIT_SIZE	(28 << 10)
 #define CONFIG_ROCKCHIP_CHIP_TAG	"RK32"
+#define CONFIG_ROCKUSB_G_DNL_PID	0x320B
 
 /* MMC/SD IP block */
 #define CONFIG_BOUNCE_BUFFER
 
 #define CONFIG_SYS_SDRAM_BASE		0x60000000
-#define CONFIG_NR_DRAM_BANKS		2
 #define SDRAM_BANK_SIZE			(512UL << 20UL)
 #define SDRAM_MAX_SIZE			0x80000000
 
@@ -51,9 +44,9 @@
 #define ENV_MEM_LAYOUT_SETTINGS \
 	"scriptaddr=0x60000000\0" \
 	"pxefile_addr_r=0x60100000\0" \
-	"fdt_addr_r=0x61f00000\0" \
-	"kernel_addr_r=0x62000000\0" \
-	"ramdisk_addr_r=0x64000000\0"
+	"fdt_addr_r=0x68300000\0" \
+	"kernel_addr_r=0x62008000\0" \
+	"ramdisk_addr_r=0x6a200000\0"
 
 #include <config_distro_bootcmd.h>
 
@@ -63,6 +56,8 @@
 	"fdt_high=0x7fffffff\0" \
 	"partitions=" PARTS_DEFAULT \
 	ENV_MEM_LAYOUT_SETTINGS \
+	ROCKCHIP_DEVICE_SETTINGS \
+	RKIMG_DET_BOOTDEV \
 	BOOTENV
 #endif
 

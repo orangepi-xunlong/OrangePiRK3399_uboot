@@ -8,8 +8,6 @@
 #include <common.h>
 #include <errno.h>
 #include <malloc.h>
-#include <fdtdec.h>
-#include <fdt_support.h>
 #include <asm/unaligned.h>
 #include <linux/list.h>
 #include <dm/device.h>
@@ -24,9 +22,39 @@ static const struct rockchip_crtc rk3036_vop_data = {
 	.data = &rk3036_vop,
 };
 
-static const struct rockchip_crtc rk3288_vop_data = {
+static const struct rockchip_crtc rv1108_vop_data = {
 	.funcs = &rockchip_vop_funcs,
-	.data = &rk3288_vop,
+	.data = &rv1108_vop,
+};
+
+static const struct rockchip_crtc px30_vop_lit_data = {
+	.funcs = &rockchip_vop_funcs,
+	.data = &px30_vop_lit,
+};
+
+static const struct rockchip_crtc px30_vop_big_data = {
+	.funcs = &rockchip_vop_funcs,
+	.data = &px30_vop_big,
+};
+
+static const struct rockchip_crtc rk3308_vop_data = {
+	.funcs = &rockchip_vop_funcs,
+	.data = &rk3308_vop,
+};
+
+static const struct rockchip_crtc rk1808_vop_data = {
+	.funcs = &rockchip_vop_funcs,
+	.data = &rk1808_vop,
+};
+
+static const struct rockchip_crtc rk3288_vop_big_data = {
+	.funcs = &rockchip_vop_funcs,
+	.data = &rk3288_vop_big,
+};
+
+static const struct rockchip_crtc rk3288_vop_lit_data = {
+	.funcs = &rockchip_vop_funcs,
+	.data = &rk3288_vop_lit,
 };
 
 static const struct rockchip_crtc rk3368_vop_data = {
@@ -64,11 +92,29 @@ static const struct udevice_id rockchip_vop_ids[] = {
 		.compatible = "rockchip,rk3036-vop",
 		.data = (ulong)&rk3036_vop_data,
 	}, {
+		.compatible = "rockchip,rv1108-vop",
+		.data = (ulong)&rv1108_vop_data,
+	}, {
 		.compatible = "rockchip,rk3126-vop",
 		.data = (ulong)&rk3036_vop_data,
 	}, {
-		.compatible = "rockchip,rk3288-vop",
-		.data = (ulong)&rk3288_vop_data,
+		.compatible = "rockchip,px30-vop-lit",
+		.data = (ulong)&px30_vop_lit_data,
+	}, {
+		.compatible = "rockchip,px30-vop-big",
+		.data = (ulong)&px30_vop_big_data,
+	}, {
+		.compatible = "rockchip,rk3308-vop",
+		.data = (ulong)&rk3308_vop_data,
+	}, {
+		.compatible = "rockchip,rk1808-vop-lit",
+		.data = (ulong)&rk1808_vop_data,
+	}, {
+		.compatible = "rockchip,rk3288-vop-big",
+		.data = (ulong)&rk3288_vop_big_data,
+	}, {
+		.compatible = "rockchip,rk3288-vop-lit",
+		.data = (ulong)&rk3288_vop_lit_data,
 	}, {
 		.compatible = "rockchip,rk3368-vop",
 		.data = (ulong)&rk3368_vop_data,

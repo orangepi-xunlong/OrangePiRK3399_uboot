@@ -7,6 +7,7 @@
 /dts-v1/;
 
 #include "rk322x.dtsi"
+#include "rk322x-u-boot.dtsi"
 #include <dt-bindings/input/input.h>
 
 / {
@@ -14,12 +15,7 @@
 	compatible = "rockchip,rk3229-evb", "rockchip,rk3229";
 
 	chosen {
-		stdout-path = &uart2;
-	};
-
-	memory@60000000 {
-		device_type = "memory";
-		reg = <0x60000000 0x40000000>;
+		u-boot,spl-boot-order = &emmc, &sdmmc;
 	};
 
 	ext_gmac: ext_gmac {
@@ -37,6 +33,19 @@
 		regulator-max-microvolt = <1800000>;
 		regulator-always-on;
 		regulator-boot-on;
+	};
+
+	gpio-keys {
+		u-boot,dm-spl;
+		compatible = "gpio-keys";
+		status = "okay";
+
+		volume-up {
+			u-boot,dm-spl;
+			linux,code = <KEY_VOLUMEUP>;
+			label = "Volume Up";
+			gpios = <&gpio3 25 GPIO_ACTIVE_LOW>;
+		};
 	};
 };
 
@@ -68,7 +77,10 @@
 };
 
 &emmc {
-	u-boot,dm-pre-reloc;
+	status = "okay";
+};
+
+&nandc {
 	status = "okay";
 };
 
@@ -84,8 +96,19 @@
 };
 
 &uart2 {
-	u-boot,dm-pre-reloc;
 	status = "okay";
+};
+
+&u2phy0 {
+	status = "okay";
+
+	u2phy0_otg: otg-port {
+		status = "okay";
+	};
+
+	u2phy0_host: host-port {
+		status = "okay";
+	};
 };
 
 &usb20_otg {

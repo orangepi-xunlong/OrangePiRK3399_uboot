@@ -11,8 +11,8 @@
 #include <dm.h>
 #include <efi_loader.h>
 #include <errno.h>
-#include <libfdt.h>
-#include <libfdt_env.h>
+#include <linux/libfdt.h>
+#include <linux/libfdt_env.h>
 #include <memalign.h>
 #include <asm/global_data.h>
 #include <asm-generic/sections.h>
@@ -299,7 +299,11 @@ static int do_bootefi(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	if (!strcmp(argv[1], "hello")) {
 		ulong size = __efi_hello_world_end - __efi_hello_world_begin;
 
-		addr = CONFIG_SYS_LOAD_ADDR;
+		saddr = env_get("loadaddr");
+		if (saddr)
+			addr = simple_strtoul(saddr, NULL, 16);
+		else
+			addr = CONFIG_SYS_LOAD_ADDR;
 		memcpy((char *)addr, __efi_hello_world_begin, size);
 	} else
 #endif

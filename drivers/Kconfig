@@ -10,6 +10,8 @@ source "drivers/ata/Kconfig"
 
 source "drivers/block/Kconfig"
 
+source "drivers/bootcount/Kconfig"
+
 source "drivers/clk/Kconfig"
 
 source "drivers/cpu/Kconfig"
@@ -73,6 +75,8 @@ source "drivers/remoteproc/Kconfig"
 source "drivers/reset/Kconfig"
 
 source "drivers/rknand/Kconfig"
+
+source "drivers/rkflash/Kconfig"
 
 source "drivers/rtc/Kconfig"
 

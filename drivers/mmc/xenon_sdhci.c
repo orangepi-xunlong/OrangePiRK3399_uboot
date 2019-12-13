@@ -18,7 +18,7 @@
 #include <common.h>
 #include <dm.h>
 #include <fdtdec.h>
-#include <libfdt.h>
+#include <linux/libfdt.h>
 #include <malloc.h>
 #include <sdhci.h>
 
@@ -147,7 +147,7 @@ static int xenon_mmc_phy_init(struct sdhci_host *host)
 	}
 
 	if (time <= 0) {
-		error("Failed to enable MMC internal clock in time\n");
+		pr_err("Failed to enable MMC internal clock in time\n");
 		return -ETIMEDOUT;
 	}
 
@@ -175,7 +175,7 @@ static int xenon_mmc_phy_init(struct sdhci_host *host)
 	}
 
 	if (time <= 0) {
-		error("Failed to init MMC PHY in time\n");
+		pr_err("Failed to init MMC PHY in time\n");
 		return -ETIMEDOUT;
 	}
 

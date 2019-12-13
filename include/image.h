@@ -53,7 +53,7 @@ struct lmb;
 
 #if IMAGE_ENABLE_FIT
 #include <hash.h>
-#include <libfdt.h>
+#include <linux/libfdt.h>
 #include <fdt_support.h>
 # ifdef CONFIG_SPL_BUILD
 #  ifdef CONFIG_SPL_CRC32_SUPPORT
@@ -152,6 +152,8 @@ enum {
 	IH_OS_OSE,			/* OSE		*/
 	IH_OS_PLAN9,			/* Plan 9	*/
 	IH_OS_OPENRTOS,		/* OpenRTOS	*/
+	IH_OS_ARM_TRUSTED_FIRMWARE,     /* ARM Trusted Firmware */
+	IH_OS_OP_TEE,			/* OP-TEE	*/
 
 	IH_OS_COUNT,
 };
@@ -269,6 +271,8 @@ enum {
 	IH_TYPE_VYBRIDIMAGE,	/* VYBRID .vyb Image */
 	IH_TYPE_TEE,            /* Trusted Execution Environment OS Image */
 	IH_TYPE_FIRMWARE_IVT,		/* Firmware Image with HABv4 IVT */
+	IH_TYPE_PMMC,            /* TI Power Management Micro-Controller Firmware */
+	IH_TYPE_RKNAND,			/* Rockchip NAND Boot Image	*/
 
 	IH_TYPE_COUNT,			/* Number of image types */
 };
@@ -286,6 +290,7 @@ enum {
 	IH_COMP_LZMA,			/* lzma  Compression Used	*/
 	IH_COMP_LZO,			/* lzo   Compression Used	*/
 	IH_COMP_LZ4,			/* lz4   Compression Used	*/
+	IH_COMP_ZIMAGE,			/* zImage Decompressed itself   */
 
 	IH_COMP_COUNT,
 };
@@ -557,7 +562,6 @@ ulong genimg_get_kernel_addr_fit(char * const img_addr,
 ulong genimg_get_kernel_addr(char * const img_addr);
 int genimg_get_format(const void *img_addr);
 int genimg_has_config(bootm_headers_t *images);
-ulong genimg_get_image(ulong img_addr);
 
 int boot_get_fpga(int argc, char * const argv[], bootm_headers_t *images,
 		uint8_t arch, const ulong *ld_start, ulong * const ld_len);
@@ -591,6 +595,31 @@ int boot_get_loadable(int argc, char * const argv[], bootm_headers_t *images,
 
 int boot_get_setup_fit(bootm_headers_t *images, uint8_t arch,
 		       ulong *setup_start, ulong *setup_len);
+
+/**
+ * boot_get_fdt_fit() - load a DTB from a FIT file (applying overlays)
+ *
+ * This deals with all aspects of loading an DTB from a FIT.
+ * The correct base image based on configuration will be selected, and
+ * then any overlays specified will be applied (as present in fit_uname_configp).
+ *
+ * @param images	Boot images structure
+ * @param addr		Address of FIT in memory
+ * @param fit_unamep	On entry this is the requested image name
+ *			(e.g. "kernel@1") or NULL to use the default. On exit
+ *			points to the selected image name
+ * @param fit_uname_configp	On entry this is the requested configuration
+ *			name (e.g. "conf@1") or NULL to use the default. On
+ *			exit points to the selected configuration name.
+ * @param arch		Expected architecture (IH_ARCH_...)
+ * @param datap		Returns address of loaded image
+ * @param lenp		Returns length of loaded image
+ *
+ * @return node offset of base image, or -ve error code on error
+ */
+int boot_get_fdt_fit(bootm_headers_t *images, ulong addr,
+		   const char **fit_unamep, const char **fit_uname_configp,
+		   int arch, ulong *datap, ulong *lenp);
 
 /**
  * fit_image_load() - load an image from a FIT
@@ -662,6 +691,11 @@ int boot_get_fdt(int flag, int argc, char * const argv[], uint8_t arch,
 		 bootm_headers_t *images,
 		 char **of_flat_tree, ulong *of_size);
 void boot_fdt_add_mem_rsv_regions(struct lmb *lmb, void *fdt_blob);
+#ifdef CONFIG_SYSMEM
+int boot_fdt_add_sysmem_rsv_regions(void *fdt_blob);
+#else
+static inline int boot_fdt_add_sysmem_rsv_regions(void *fdt_blob) { return 0; }
+#endif
 int boot_relocate_fdt(struct lmb *lmb, char **of_flat_tree, ulong *of_size);
 
 int boot_ramdisk_high(struct lmb *lmb, ulong rd_data, ulong rd_len,
@@ -1233,11 +1267,50 @@ int android_image_get_kernel(const struct andr_img_hdr *hdr, int verify,
 			     ulong *os_data, ulong *os_len);
 int android_image_get_ramdisk(const struct andr_img_hdr *hdr,
 			      ulong *rd_data, ulong *rd_len);
+int android_image_get_fdt(const struct andr_img_hdr *hdr,
+			      ulong *rd_data);
+u32 android_image_get_comp(const struct andr_img_hdr *hdr);
 ulong android_image_get_end(const struct andr_img_hdr *hdr);
 ulong android_image_get_kload(const struct andr_img_hdr *hdr);
 void android_print_contents(const struct andr_img_hdr *hdr);
 
+/** android_image_load_separate - Load an Android Image separate from storage or ram
+ *
+ * Load an Android Image based on the header size in the storage or ram.
+ *
+ * @hdr:		The android image header
+ * @part:		The partition where to read the image from
+ * @load_address:	The address where the image will be loaded
+ * @ram_src:		The ram source to load, if NULL load from partition
+ * @return the blk count.
+ */
+int android_image_load_separate(struct andr_img_hdr *hdr,
+				const disk_partition_t *part,
+				void *load_address, void *ram_src);
+
+/** android_image_load - Load an Android Image from storage.
+ *
+ * Load an Android Image based on the header size in the storage.
+ * Return the final load address, which could be a different address
+ * of argument load_address, if the Kernel Image is compressed. In case
+ * of error reading the image or if the image size needed to be read
+ * from disk is bigger than the passed |max_size| a negative number
+ * is returned.
+ *
+ * @dev_desc:		The device where to read the image from
+ * @part_info:		The partition in |dev_desc| where to read the image from
+ * @load_address:	The address where the image will be loaded
+ * @max_size:		The maximum loaded size, in bytes
+ * @return the final load address or a negative number in case of error.
+ */
+long android_image_load(struct blk_desc *dev_desc,
+			const disk_partition_t *part_info,
+			unsigned long load_address,
+			unsigned long max_size);
+
 #endif /* CONFIG_ANDROID_BOOT_IMAGE */
+
+int bootm_parse_comp(const unsigned char *hdr);
 
 /**
  * board_fit_config_name_match() - Check for a matching board name
@@ -1273,6 +1346,19 @@ void board_fit_image_post_process(void **p_image, size_t *p_size);
 #define FDT_ERROR	((ulong)(-1))
 
 ulong fdt_getprop_u32(const void *fdt, int node, const char *prop);
+
+/**
+ * fit_find_config_node() - Find the node for the best DTB in a FIT image
+ *
+ * A FIT image contains one or more DTBs. This function parses the
+ * configurations described in the FIT images and returns the node of
+ * the first matching DTB. To check if a DTB matches a board, this function
+ * calls board_fit_config_name_match(). If no matching DTB is found, it returns
+ * the node described by the default configuration if it exists.
+ *
+ * @fdt: pointer to flat device tree
+ * @return the node if found, -ve otherwise
+ */
 int fit_find_config_node(const void *fdt);
 
 /**

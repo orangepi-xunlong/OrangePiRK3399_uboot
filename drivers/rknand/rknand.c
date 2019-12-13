@@ -5,6 +5,7 @@
  */
 
 #include <common.h>
+#include <asm/arch/vendor.h>
 #include <dm.h>
 #include <dm/device-internal.h>
 #include <dm/lists.h>
@@ -93,6 +94,34 @@ ulong rknand_berase(struct udevice *udev, lbaint_t start,
 	return blkcnt;
 }
 
+int rkftl_nand_vendor_read(struct blk_desc *dev_desc,
+			   u32 index,
+			   u32 n_sec,
+			   void *p_data)
+{
+	int ret;
+
+	ret = ftl_vendor_read(index, n_sec, p_data);
+	if (!ret)
+		return n_sec;
+	else
+		return -EIO;
+}
+
+int rkftl_nand_vendor_write(struct blk_desc *dev_desc,
+			    u32 index,
+			    u32 n_sec,
+			    void *p_data)
+{
+	int ret;
+
+	ret = ftl_vendor_write(index, n_sec, p_data);
+	if (!ret)
+		return n_sec;
+	else
+		return -EIO;
+}
+
 int rknand_scan_namespace(void)
 {
 	struct uclass *uc;
@@ -146,7 +175,7 @@ static int rknand_blk_probe(struct udevice *udev)
 	sprintf(desc->vendor, "0x%.4x", 0x2207);
 	memcpy(desc->product, "rknand", sizeof("rknand"));
 	memcpy(desc->revision, "V1.00", sizeof("V1.00"));
-	/* part_init(desc); */
+	part_init(desc);
 	return 0;
 }
 
@@ -155,13 +184,17 @@ static int rockchip_nand_probe(struct udevice *udev)
 	int ret;
 	struct rknand_dev *ndev = dev_get_priv(udev);
 
-	ndev->ioaddr = (void *)devfdt_get_addr(udev);
+	ndev->ioaddr = dev_read_addr_ptr(udev);
 	ret = rk_ftl_init(ndev->ioaddr);
 	if (!ret) {
 		ndev->density = ftl_get_density(0);
 		ndev->read = ftl_read;
 		ndev->write = ftl_write;
 		ndev->erase = ftl_discard;
+#ifdef CONFIG_ROCKCHIP_VENDOR_PARTITION
+		flash_vendor_dev_ops_register(rkftl_nand_vendor_read,
+					      rkftl_nand_vendor_write);
+#endif
 	}
 
 	return ret;

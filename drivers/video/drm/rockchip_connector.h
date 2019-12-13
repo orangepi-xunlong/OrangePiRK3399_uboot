@@ -7,8 +7,6 @@
 #ifndef _ROCKCHIP_CONNECTOR_H_
 #define _ROCKCHIP_CONNECTOR_H_
 
-#include "rockchip_mipi_dsi.h"
-
 struct rockchip_connector {
 	const struct rockchip_connector_funcs *funcs;
 
@@ -58,34 +56,16 @@ struct rockchip_connector_funcs {
 	 * Save data to dts, then you can share data to kernel space.
 	 */
 	int (*fixup_dts)(struct display_state *state, void *blob);
-	/* transmit a DSI packet */
-	ssize_t (*transfer)(struct display_state *state,
-			    const struct mipi_dsi_msg *msg);
 };
 
 const struct rockchip_connector *
 rockchip_get_connector(const void *blob, int connector_node);
 
-#ifdef CONFIG_DRM_ROCKCHIP_DW_MIPI_DSI
-struct dw_mipi_dsi_plat_data;
-extern const struct rockchip_connector_funcs rockchip_dw_mipi_dsi_funcs;
-extern const struct dw_mipi_dsi_plat_data rk3288_mipi_dsi_drv_data;
-extern const struct dw_mipi_dsi_plat_data rk3366_mipi_dsi_drv_data;
-extern const struct dw_mipi_dsi_plat_data rk3368_mipi_dsi_drv_data;
-extern const struct dw_mipi_dsi_plat_data rk3399_mipi_dsi_drv_data;
-#endif
 #ifdef CONFIG_DRM_ROCKCHIP_ANALOGIX_DP
 struct rockchip_dp_chip_data;
 extern const struct rockchip_connector_funcs rockchip_analogix_dp_funcs;
 extern const struct rockchip_dp_chip_data rk3399_analogix_edp_drv_data;
 extern const struct rockchip_dp_chip_data rk3368_analogix_edp_drv_data;
 extern const struct rockchip_dp_chip_data rk3288_analogix_dp_drv_data;
-#endif
-#ifdef CONFIG_DRM_ROCKCHIP_LVDS
-struct rockchip_lvds_chip_data;
-extern const struct rockchip_connector_funcs rockchip_lvds_funcs;
-extern const struct rockchip_lvds_chip_data rk3366_lvds_drv_data;
-extern const struct rockchip_lvds_chip_data rk3368_lvds_drv_data;
-extern const struct rockchip_lvds_chip_data rk3288_lvds_drv_data;
 #endif
 #endif

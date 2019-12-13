@@ -19,7 +19,6 @@
 #include <i2c.h>
 #include <initcall.h>
 #include <init_helpers.h>
-#include <logbuff.h>
 #include <malloc.h>
 #include <mapmem.h>
 #include <os.h>
@@ -41,6 +40,7 @@
 #include <asm/sections.h>
 #include <dm/root.h>
 #include <linux/errno.h>
+#include <sysmem.h>
 
 /*
  * Pointer to initial global data area
@@ -118,7 +118,11 @@ __weak void board_add_ram_info(int use_default)
 
 static int init_baud_rate(void)
 {
-	gd->baudrate = env_get_ulong("baudrate", 10, CONFIG_BAUDRATE);
+	if (gd && gd->serial.using_pre_serial)
+		gd->baudrate = env_get_ulong("baudrate", 10, gd->serial.baudrate);
+	else
+		gd->baudrate = env_get_ulong("baudrate", 10, CONFIG_BAUDRATE);
+
 	return 0;
 }
 
@@ -142,6 +146,16 @@ static int display_text_info(void)
 
 	return 0;
 }
+
+#if defined(CONFIG_ROCKCHIP_PRELOADER_SERIAL)
+static int announce_pre_serial(void)
+{
+	if (gd && gd->serial.using_pre_serial)
+		printf("PreSerial: %d\n", gd->serial.id);
+
+	return 0;
+}
+#endif
 
 static int announce_dram_init(void)
 {
@@ -295,20 +309,6 @@ static int setup_dest_addr(void)
 #endif
 	return 0;
 }
-
-#if defined(CONFIG_LOGBUFFER)
-static int reserve_logbuffer(void)
-{
-#ifndef CONFIG_ALT_LB_ADDR
-	/* reserve kernel log buffer */
-	gd->relocaddr -= LOGBUFF_RESERVE;
-	debug("Reserving %dk for kernel logbuffer at %08lx\n", LOGBUFF_LEN,
-		gd->relocaddr);
-#endif
-
-	return 0;
-}
-#endif
 
 #ifdef CONFIG_PRAM
 /* reserve protected RAM */
@@ -628,6 +628,7 @@ static int setup_reloc(void)
 		return 0;
 	}
 
+#ifndef CONFIG_SKIP_RELOCATE_UBOOT
 #ifdef CONFIG_SYS_TEXT_BASE
 #ifdef ARM
 	gd->reloc_off = gd->relocaddr - (unsigned long)__image_copy_start;
@@ -641,9 +642,13 @@ static int setup_reloc(void)
 	gd->reloc_off = gd->relocaddr - CONFIG_SYS_TEXT_BASE;
 #endif
 #endif
+
+#else
+	gd->reloc_off = 0;
+#endif
 	memcpy(gd->new_gd, (char *)gd, sizeof(gd_t));
 
-	debug("Relocation Offset is: %08lx\n", gd->reloc_off);
+	printf("Relocation Offset is: %08lx\n", gd->reloc_off);
 	debug("Relocating to %08lx, new gd at %08lx, sp at %08lx\n",
 	      gd->relocaddr, (ulong)map_to_sysmem(gd->new_gd),
 	      gd->start_addr_sp);
@@ -766,6 +771,7 @@ static const init_fnc_t init_sequence_f[] = {
 	trace_early_init,
 #endif
 	initf_malloc,
+	log_init,
 	initf_bootstage,	/* uses its own timer, so does not need DM */
 	initf_console_record,
 #if defined(CONFIG_HAVE_FSP)
@@ -818,6 +824,9 @@ static const init_fnc_t init_sequence_f[] = {
 #if defined(CONFIG_HARD_SPI)
 	init_func_spi,
 #endif
+#if defined(CONFIG_ROCKCHIP_PRELOADER_SERIAL)
+	announce_pre_serial,
+#endif
 	announce_dram_init,
 	dram_init,		/* configure available RAM banks */
 #ifdef CONFIG_POST
@@ -846,9 +855,6 @@ static const init_fnc_t init_sequence_f[] = {
 	 *  - board info struct
 	 */
 	setup_dest_addr,
-#if defined(CONFIG_LOGBUFFER)
-	reserve_logbuffer,
-#endif
 #ifdef CONFIG_PRAM
 	reserve_pram,
 #endif
@@ -869,6 +875,9 @@ static const init_fnc_t init_sequence_f[] = {
 	reserve_stacks,
 	dram_init_banksize,
 	show_dram_config,
+#ifdef CONFIG_SYSMEM
+	sysmem_init,		/* Validate above reserve memory */
+#endif
 #if defined(CONFIG_M68K) || defined(CONFIG_MIPS) || defined(CONFIG_PPC) || \
 	defined(CONFIG_SH)
 	setup_board_part1,
@@ -950,8 +959,13 @@ void board_init_f_r(void)
 	 * The pre-relocation drivers may be using memory that has now gone
 	 * away. Mark serial as unavailable - this will fall back to the debug
 	 * UART if available.
+	 *
+	 * Do the same with log drivers since the memory may not be available.
 	 */
-	gd->flags &= ~GD_FLG_SERIAL_READY;
+	gd->flags &= ~(GD_FLG_SERIAL_READY | GD_FLG_LOG_READY);
+#ifdef CONFIG_TIMER
+	gd->timer = NULL;
+#endif
 
 	/*
 	 * U-Boot has been copied into SDRAM, the BSS has been cleared etc.

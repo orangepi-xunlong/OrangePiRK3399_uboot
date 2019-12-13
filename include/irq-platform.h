@@ -22,7 +22,7 @@
 #define IRQ_TIMER1			61
 #define IRQ_GPIO0			68
 #define IRQ_GPIO1			69
-#define IRQ_GPIO2			79
+#define IRQ_GPIO2			70
 #define IRQ_GPIO3			71
 
 #elif defined(CONFIG_ROCKCHIP_RK322X)
@@ -104,7 +104,8 @@
 #define GPIO_BANK_NUM			4
 #define GPIO_BANK_PINS			32
 
-#define IRQ_TIMER1			79
+#define IRQ_TIMER0			98
+#define IRQ_TIMER1			99
 #define IRQ_PWM				110
 #define IRQ_GPIO0			113
 #define IRQ_GPIO1			114
@@ -131,6 +132,70 @@
 
 #define GPIO_BANK_NUM			5
 #define GPIO_BANK_PINS			32
+
+#elif defined(CONFIG_ROCKCHIP_PX30)
+#define GPIO0_PHYS			0xff040000
+#define GPIO1_PHYS			0xff250000
+#define GPIO2_PHYS			0xff260000
+#define GPIO3_PHYS			0xff270000
+
+#define IRQ_GPIO0			35
+#define IRQ_GPIO1			36
+#define IRQ_GPIO2			37
+#define IRQ_GPIO3			38
+#define IRQ_PWM0			56
+#define IRQ_PWM1			57
+#define IRQ_TIMER0			62	/* non-secure */
+#define IRQ_TIMER1			63	/* non-secure */
+
+#define GIC_IRQS_NR			(4 * 32)
+#define GPIO_IRQS_NR			(4 * 32)
+
+#define GPIO_BANK_NUM			4
+#define GPIO_BANK_PINS			32
+
+#elif defined(CONFIG_ROCKCHIP_RK3308)
+#define GPIO0_PHYS			0xff220000
+#define GPIO1_PHYS			0xff230000
+#define GPIO2_PHYS			0xff240000
+#define GPIO3_PHYS			0xff250000
+#define GPIO4_PHYS			0xff260000
+
+#define IRQ_TIMER1			58	/* ch0 ns timer1 */
+#define IRQ_GPIO0			72
+#define IRQ_GPIO1			73
+#define IRQ_GPIO2			74
+#define IRQ_GPIO3			75
+#define IRQ_GPIO4			76
+
+#define GIC_IRQS_NR			(5 * 32)
+#define GPIO_IRQS_NR			(5 * 32)
+
+#define GPIO_BANK_NUM			5
+#define GPIO_BANK_PINS			32
+
+#elif defined(CONFIG_ROCKCHIP_RK1808)
+#define GPIO0_PHYS			0xff4c0000
+#define GPIO1_PHYS			0xff690000
+#define GPIO2_PHYS			0xff6a0000
+#define GPIO3_PHYS			0xff6b0000
+#define GPIO4_PHYS			0xff6c0000
+
+#define IRQ_GPIO0			35
+#define IRQ_GPIO1			36
+#define IRQ_GPIO2			37
+#define IRQ_GPIO3			38
+#define IRQ_GPIO4			114
+
+#define IRQ_TIMER0			58
+#define IRQ_TIMER1			59
+
+#define GIC_IRQS_NR			(5 * 32)
+#define GPIO_IRQS_NR			(5 * 32)
+
+#define GPIO_BANK_NUM			5
+#define GPIO_BANK_PINS			32
+
 #else
 "Missing define RIQ relative things"
 #endif

@@ -210,9 +210,6 @@ static int ehci_shutdown(struct ehci_ctrl *ctrl)
 	uint32_t cmd, reg;
 	int max_ports = HCS_N_PORTS(ehci_readl(&ctrl->hccr->cr_hcsparams));
 
-	if (!ctrl || !ctrl->hcor)
-		return -EINVAL;
-
 	cmd = ehci_readl(&ctrl->hcor->or_usbcmd);
 	/* If not run, directly return */
 	if (!(cmd & CMD_RUN))
@@ -595,8 +592,9 @@ ehci_submit_async(struct usb_device *dev, unsigned long pipe, void *buffer,
 	 * dangerous operation, it's responsibility of the calling
 	 * code to make sure enough space is reserved.
 	 */
-	invalidate_dcache_range((unsigned long)buffer,
-		ALIGN((unsigned long)buffer + length, ARCH_DMA_MINALIGN));
+	if (buffer != NULL && length > 0)
+		invalidate_dcache_range((unsigned long)buffer,
+			ALIGN((unsigned long)buffer + length, ARCH_DMA_MINALIGN));
 
 	/* Check that the TD processing happened */
 	if (QT_TOKEN_GET_STATUS(token) & QT_TOKEN_STATUS_ACTIVE)
@@ -1112,6 +1110,8 @@ int usb_lowlevel_init(int index, enum usb_init_type init, void **controller)
 	rc = ehci_hcd_init(index, init, &ctrl->hccr, &ctrl->hcor);
 	if (rc)
 		return rc;
+	if (!ctrl->hccr || !ctrl->hcor)
+		return -1;
 	if (init == USB_INIT_DEVICE)
 		goto done;
 
@@ -1596,16 +1596,30 @@ static int ehci_destroy_int_queue(struct udevice *dev, struct usb_device *udev,
 	return _ehci_destroy_int_queue(udev, queue);
 }
 
+static int ehci_get_max_xfer_size(struct udevice *dev, size_t *size)
+{
+	/*
+	 * EHCD can handle any transfer length as long as there is enough
+	 * free heap space left, hence set the theoretical max number here.
+	 */
+	*size = SIZE_MAX;
+
+	return 0;
+}
+
 int ehci_register(struct udevice *dev, struct ehci_hccr *hccr,
 		  struct ehci_hcor *hcor, const struct ehci_ops *ops,
 		  uint tweaks, enum usb_init_type init)
 {
 	struct usb_bus_priv *priv = dev_get_uclass_priv(dev);
 	struct ehci_ctrl *ctrl = dev_get_priv(dev);
-	int ret;
+	int ret = -1;
 
 	debug("%s: dev='%s', ctrl=%p, hccr=%p, hcor=%p, init=%d\n", __func__,
 	      dev->name, ctrl, hccr, hcor, init);
+
+	if (!ctrl || !hccr || !hcor)
+		goto err;
 
 	priv->desc_before_addr = true;
 
@@ -1658,6 +1672,7 @@ struct dm_usb_ops ehci_usb_ops = {
 	.create_int_queue = ehci_create_int_queue,
 	.poll_int_queue = ehci_poll_int_queue,
 	.destroy_int_queue = ehci_destroy_int_queue,
+	.get_max_xfer_size  = ehci_get_max_xfer_size,
 };
 
 #endif

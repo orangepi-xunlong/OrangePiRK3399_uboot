@@ -28,6 +28,11 @@
 struct rk3036_clk_priv {
 	struct rk3036_cru *cru;
 	ulong rate;
+	ulong armclk_hz;
+	ulong armclk_enter_hz;
+	ulong armclk_init_hz;
+	bool sync_kernel;
+	bool set_armclk_rate;
 };
 
 struct rk3036_cru {
@@ -66,6 +71,12 @@ struct pll_div {
 	u32 frac;
 };
 
+struct rk3036_clk_info {
+	unsigned long id;
+	char *name;
+	bool is_cru;
+};
+
 enum {
 	/* PLLCON0*/
 	PLL_POSTDIV1_SHIFT	= 12,
@@ -75,6 +86,8 @@ enum {
 
 	/* PLLCON1 */
 	PLL_RST_SHIFT		= 14,
+	PLL_PD_SHIFT		= 13,
+	PLL_PD_MASK		= 1 << PLL_PD_SHIFT,
 	PLL_DSMPD_SHIFT		= 12,
 	PLL_DSMPD_MASK		= 1 << PLL_DSMPD_SHIFT,
 	PLL_LOCK_STATUS_SHIFT	= 10,

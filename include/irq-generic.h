@@ -11,6 +11,11 @@
 #include <common.h>
 #include <dt-bindings/pinctrl/rockchip.h>
 
+#define IRQ_I(fmt, args...)	printf("IRQ: "fmt, ##args)
+#define IRQ_W(fmt, args...)	printf("IRQ Warn: "fmt, ##args)
+#define IRQ_E(fmt, args...)	printf("IRQ Err: "fmt, ##args)
+#define IRQ_D(fmt, args...)	 debug("IRQ Debug "fmt, ##args)
+
 /*
  * IRQ line status.
  *
@@ -47,20 +52,29 @@ enum {
 struct irq_chip {
 	const char	*name;
 	int		(*irq_init)(void);
+	int		(*irq_suspend)(void);
+	int		(*irq_resume)(void);
 	int		(*irq_get)(void);
 	int		(*irq_enable)(int irq);
 	int		(*irq_disable)(int irq);
 	void		(*irq_ack)(int irq);
 	void		(*irq_eoi)(int irq);
 	int		(*irq_set_type)(int irq, unsigned int flow_type);
+	int		(*irq_revert_type)(int irq);
+	int		(*irq_get_gpio_level)(int irq);
 };
 
 /* APIs for irqs */
 void irq_install_handler(int irq, interrupt_handler_t *handler, void *data);
 void irq_free_handler(int irq);
 int irq_set_irq_type(int irq, unsigned int type);
+int irq_revert_irq_type(int irq);
 int irq_handler_enable(int irq);
 int irq_handler_disable(int irq);
+int irq_get_gpio_level(int irq);
+int irqs_suspend(void);
+int irqs_resume(void);
+int irq_is_busy(int irq);
 int gpio_to_irq(struct gpio_desc *gpio);
 
 /*
@@ -75,10 +89,11 @@ int gpio_to_irq(struct gpio_desc *gpio);
  */
 #define GPIO_BANK_SHIFT			8
 #define RK_IRQ_GPIO(bank, pin) 		(((bank) << GPIO_BANK_SHIFT) | (pin))
+
 int hard_gpio_to_irq(unsigned gpio);
 int phandle_gpio_to_irq(u32 gpio_phandle, u32 pin);
 
-/* only irq-gpio.c can use it */
-void _generic_gpio_handle_irq(int irq);
+/* Only irq-gpio.c can call it */
+void __generic_gpio_handle_irq(int irq);
 
 #endif /* _IRQ_GENERIC_H */

@@ -37,6 +37,22 @@ struct rk3188_clk_plat {
 #endif
 };
 
+#ifndef CONFIG_SPL_BUILD
+#define RK3188_CLK_DUMP(_id, _name, _iscru)	\
+{						\
+	.id = _id,				\
+	.name = _name,				\
+	.is_cru = _iscru,			\
+}
+
+static const struct rk3188_clk_info clks_dump[] = {
+	RK3188_CLK_DUMP(PLL_APLL, "apll", true),
+	RK3188_CLK_DUMP(PLL_DPLL, "dpll", true),
+	RK3188_CLK_DUMP(PLL_CPLL, "cpll", true),
+	RK3188_CLK_DUMP(PLL_GPLL, "gpll", true),
+};
+#endif
+
 struct pll_div {
 	u32 nr;
 	u32 nf;
@@ -425,7 +441,7 @@ static void rkclk_init(struct rk3188_cru *cru, struct rk3188_grf *grf,
 	 * set up dependent divisors for PCLK/HCLK and ACLK clocks.
 	 */
 	aclk_div = DIV_ROUND_UP(GPLL_HZ, CPU_ACLK_HZ) - 1;
-	assert((aclk_div + 1) * CPU_ACLK_HZ == GPLL_HZ && aclk_div <= 0x1f);
+	assert((aclk_div + 1) * CPU_ACLK_HZ <= GPLL_HZ && aclk_div <= 0x1f);
 
 	rk_clrsetreg(&cru->cru_clksel_con[0],
 		     CPU_ACLK_PLL_MASK << CPU_ACLK_PLL_SHIFT |
@@ -434,11 +450,11 @@ static void rkclk_init(struct rk3188_cru *cru, struct rk3188_grf *grf,
 		     aclk_div << A9_CPU_DIV_SHIFT);
 
 	hclk_div = ilog2(CPU_ACLK_HZ / CPU_HCLK_HZ);
-	assert((1 << hclk_div) * CPU_HCLK_HZ == CPU_ACLK_HZ && hclk_div < 0x3);
+	assert((1 << hclk_div) * CPU_HCLK_HZ <= CPU_ACLK_HZ && hclk_div < 0x3);
 	pclk_div = ilog2(CPU_ACLK_HZ / CPU_PCLK_HZ);
-	assert((1 << pclk_div) * CPU_PCLK_HZ == CPU_ACLK_HZ && pclk_div < 0x4);
+	assert((1 << pclk_div) * CPU_PCLK_HZ <= CPU_ACLK_HZ && pclk_div < 0x4);
 	h2p_div = ilog2(CPU_HCLK_HZ / CPU_H2P_HZ);
-	assert((1 << h2p_div) * CPU_H2P_HZ == CPU_HCLK_HZ && pclk_div < 0x3);
+	assert((1 << h2p_div) * CPU_H2P_HZ <= CPU_HCLK_HZ && pclk_div < 0x3);
 
 	rk_clrsetreg(&cru->cru_clksel_con[1],
 		     AHB2APB_DIV_MASK << AHB2APB_DIV_SHIFT |
@@ -453,14 +469,14 @@ static void rkclk_init(struct rk3188_cru *cru, struct rk3188_grf *grf,
 	 * set up dependent divisors for PCLK/HCLK and ACLK clocks.
 	 */
 	aclk_div = GPLL_HZ / PERI_ACLK_HZ - 1;
-	assert((aclk_div + 1) * PERI_ACLK_HZ == GPLL_HZ && aclk_div < 0x1f);
+	assert((aclk_div + 1) * PERI_ACLK_HZ <= GPLL_HZ && aclk_div < 0x1f);
 
 	hclk_div = ilog2(PERI_ACLK_HZ / PERI_HCLK_HZ);
-	assert((1 << hclk_div) * PERI_HCLK_HZ ==
+	assert((1 << hclk_div) * PERI_HCLK_HZ <=
 		PERI_ACLK_HZ && (hclk_div < 0x4));
 
 	pclk_div = ilog2(PERI_ACLK_HZ / PERI_PCLK_HZ);
-	assert((1 << pclk_div) * PERI_PCLK_HZ ==
+	assert((1 << pclk_div) * PERI_PCLK_HZ <=
 		PERI_ACLK_HZ && (pclk_div < 0x4));
 
 	rk_clrsetreg(&cru->cru_clksel_con[10],
@@ -571,7 +587,7 @@ static int rk3188_clk_ofdata_to_platdata(struct udevice *dev)
 #if !CONFIG_IS_ENABLED(OF_PLATDATA)
 	struct rk3188_clk_priv *priv = dev_get_priv(dev);
 
-	priv->cru = (struct rk3188_cru *)devfdt_get_addr(dev);
+	priv->cru = dev_read_addr_ptr(dev);
 #endif
 
 	return 0;
@@ -593,8 +609,14 @@ static int rk3188_clk_probe(struct udevice *dev)
 
 	priv->cru = map_sysmem(plat->dtd.reg[0], plat->dtd.reg[1]);
 #endif
-
+	priv->sync_kernel = false;
+	if (!priv->armclk_enter_hz)
+		priv->armclk_enter_hz = rkclk_pll_get_rate(priv->cru,
+							   CLK_ARM);
 	rkclk_init(priv->cru, priv->grf, priv->has_bwadj);
+	if (!priv->armclk_init_hz)
+		priv->armclk_init_hz = rkclk_pll_get_rate(priv->cru,
+							  CLK_ARM);
 #endif
 
 	return 0;
@@ -603,17 +625,35 @@ static int rk3188_clk_probe(struct udevice *dev)
 static int rk3188_clk_bind(struct udevice *dev)
 {
 	int ret;
-	struct udevice *sys_child;
-	struct sysreset_reg *priv = malloc(sizeof(struct sysreset_reg));
+	struct udevice *sys_child, *sf_child;
+	struct sysreset_reg *priv;
+	struct softreset_reg *sf_priv;
 
 	/* The reset driver does not have a device node, so bind it here */
-	ret = device_bind_driver(dev, "rockchip_sysreset", "sysreset", &sys_child);
-	if (ret)
+	ret = device_bind_driver(dev, "rockchip_sysreset", "sysreset",
+				 &sys_child);
+	if (ret) {
 		debug("Warning: No sysreset driver: ret=%d\n", ret);
+	} else {
+		priv = malloc(sizeof(struct sysreset_reg));
+		priv->glb_srst_fst_value = offsetof(struct rk3188_cru,
+						    cru_glb_srst_fst_value);
+		priv->glb_srst_snd_value = offsetof(struct rk3188_cru,
+						    cru_glb_srst_snd_value);
+		sys_child->priv = priv;
+	}
 
-	priv->glb_srst_fst_value = offsetof(struct rk3188_cru, cru_glb_srst_fst_value);
-	priv->glb_srst_snd_value = offsetof(struct rk3188_cru, cru_glb_srst_snd_value);
-	sys_child->priv = priv;
+	ret = device_bind_driver_to_node(dev, "rockchip_reset", "reset",
+					 dev_ofnode(dev), &sf_child);
+	if (ret) {
+		debug("Warning: No rockchip reset driver: ret=%d\n", ret);
+	} else {
+		sf_priv = malloc(sizeof(struct softreset_reg));
+		sf_priv->sf_reset_offset = offsetof(struct rk3188_cru,
+						    cru_softrst_con[0]);
+		sf_priv->sf_reset_num = 9;
+		sf_child->priv = sf_priv;
+	}
 
 	return 0;
 }
@@ -635,3 +675,69 @@ U_BOOT_DRIVER(rockchip_rk3188_cru) = {
 	.ofdata_to_platdata	= rk3188_clk_ofdata_to_platdata,
 	.probe			= rk3188_clk_probe,
 };
+
+#ifndef CONFIG_SPL_BUILD
+/**
+ * soc_clk_dump() - Print clock frequencies
+ * Returns zero on success
+ *
+ * Implementation for the clk dump command.
+ */
+int soc_clk_dump(void)
+{
+	struct udevice *cru_dev;
+	struct rk3188_clk_priv *priv;
+	const struct rk3188_clk_info *clk_dump;
+	struct clk clk;
+	unsigned long clk_count = ARRAY_SIZE(clks_dump);
+	unsigned long rate;
+	int i, ret;
+
+	ret = uclass_get_device_by_driver(UCLASS_CLK,
+					  DM_GET_DRIVER(rockchip_rk3188_cru),
+					  &cru_dev);
+	if (ret) {
+		printf("%s failed to get cru device\n", __func__);
+		return ret;
+	}
+
+	priv = dev_get_priv(cru_dev);
+	printf("CLK: (%s. arm: enter %lu KHz, init %lu KHz, kernel %lu%s)\n",
+	       priv->sync_kernel ? "sync kernel" : "uboot",
+	       priv->armclk_enter_hz / 1000,
+	       priv->armclk_init_hz / 1000,
+	       priv->set_armclk_rate ? priv->armclk_hz / 1000 : 0,
+	       priv->set_armclk_rate ? " KHz" : "N/A");
+	for (i = 0; i < clk_count; i++) {
+		clk_dump = &clks_dump[i];
+		if (clk_dump->name) {
+			clk.id = clk_dump->id;
+			if (clk_dump->is_cru)
+				ret = clk_request(cru_dev, &clk);
+			if (ret < 0)
+				return ret;
+
+			rate = clk_get_rate(&clk);
+			clk_free(&clk);
+			if (i == 0) {
+				if (rate < 0)
+					printf("  %s %s\n", clk_dump->name,
+					       "unknown");
+				else
+					printf("  %s %lu KHz\n", clk_dump->name,
+					       rate / 1000);
+			} else {
+				if (rate < 0)
+					printf("  %s %s\n", clk_dump->name,
+					       "unknown");
+				else
+					printf("  %s %lu KHz\n", clk_dump->name,
+					       rate / 1000);
+			}
+		}
+	}
+
+	return 0;
+}
+#endif
+

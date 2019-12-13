@@ -46,8 +46,33 @@ config I8042_KEYB
 	  handled by the keyboard itself.
 
 config RK8XX_PWRKEY
-	bool "Enable RK805/816 pwrkey support"
-	depends on DM_KEY && PMIC_RK8XX
-	default y
+	bool "Enable RK805/816/817 pwrkey support"
+	depends on DM_KEY && PMIC_RK8XX && IRQ
 	help
-	  This adds a driver for the RK805/816 pwrkey support.
+	  This adds a driver for the RK805/816/817 pwrkey support.
+
+config ADC_KEY
+	bool "Enable adc keys support"
+	depends on DM_KEY
+	help
+	  This adds a driver for the adc keys support.
+
+config GPIO_KEY
+	bool "Enable gpio keys support"
+	depends on DM_KEY
+	help
+	  This adds a driver for the gpio keys support.
+
+config RK_KEY
+	bool "Enable rk keys support"
+	depends on DM_KEY
+	help
+	  This adds a driver for the rk keys support.
+
+config PWRKEY_DNL_TRIGGER_NUM
+	int "Enter download mode by pwrkey trigger count"
+	default 0
+	depends on DM_KEY && IRQ
+	help
+	  This support enter download mode by press and release pwrkey for times
+	  over the trigger count. The default value 0 means disabled.

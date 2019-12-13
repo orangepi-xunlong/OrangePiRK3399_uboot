@@ -7,34 +7,70 @@
 #ifndef _ROCKCHIP_PANEL_H_
 #define _ROCKCHIP_PANEL_H_
 
+struct display_state;
+struct rockchip_panel;
+
 struct rockchip_panel_funcs {
-	int (*init)(struct display_state *state);
-	void (*deinit)(struct display_state *state);
-	int (*prepare)(struct display_state *state);
-	int (*unprepare)(struct display_state *state);
-	int (*enable)(struct display_state *state);
-	int (*disable)(struct display_state *state);
+	void (*init)(struct rockchip_panel *panel);
+	void (*prepare)(struct rockchip_panel *panel);
+	void (*unprepare)(struct rockchip_panel *panel);
+	void (*enable)(struct rockchip_panel *panel);
+	void (*disable)(struct rockchip_panel *panel);
 };
 
 struct rockchip_panel {
+	struct udevice *dev;
+	u32 bus_format;
+	unsigned int bpc;
 	const struct rockchip_panel_funcs *funcs;
 	const void *data;
+
+	struct display_state *state;
 };
 
-const struct rockchip_panel *rockchip_get_panel(const void *blob, int node);
-const struct drm_display_mode *
-rockchip_get_display_mode_from_panel(struct display_state *state);
-int rockchip_panel_init(struct display_state *state);
-void rockchip_panel_deinit(struct display_state *state);
-int rockchip_panel_enable(struct display_state *state);
-int rockchip_panel_disable(struct display_state *state);
-int rockchip_panel_prepare(struct display_state *state);
-int rockchip_panel_unprepare(struct display_state *state);
+static inline void rockchip_panel_init(struct rockchip_panel *panel)
+{
+	if (!panel)
+		return;
 
-#ifdef CONFIG_DRM_ROCKCHIP_PANEL
-extern const struct rockchip_panel_funcs panel_simple_funcs;
-#endif
-#ifdef CONFIG_DRM_ROCKCHIP_DSI_PANEL
-extern const struct rockchip_panel_funcs rockchip_dsi_panel_funcs;
-#endif
+	if (panel->funcs && panel->funcs->init)
+		panel->funcs->init(panel);
+}
+
+static inline void rockchip_panel_prepare(struct rockchip_panel *panel)
+{
+	if (!panel)
+		return;
+
+	if (panel->funcs && panel->funcs->prepare)
+		panel->funcs->prepare(panel);
+}
+
+static inline void rockchip_panel_enable(struct rockchip_panel *panel)
+{
+	if (!panel)
+		return;
+
+	if (panel->funcs && panel->funcs->enable)
+		panel->funcs->enable(panel);
+}
+
+static inline void rockchip_panel_unprepare(struct rockchip_panel *panel)
+{
+	if (!panel)
+		return;
+
+	if (panel->funcs && panel->funcs->unprepare)
+		panel->funcs->unprepare(panel);
+}
+
+static inline void rockchip_panel_disable(struct rockchip_panel *panel)
+{
+	if (!panel)
+		return;
+
+	if (panel->funcs && panel->funcs->disable)
+		panel->funcs->disable(panel);
+}
+
 #endif	/* _ROCKCHIP_PANEL_H_ */

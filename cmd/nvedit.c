@@ -42,7 +42,6 @@ DECLARE_GLOBAL_DATA_PTR;
 
 #if	!defined(CONFIG_ENV_IS_IN_EEPROM)	&& \
 	!defined(CONFIG_ENV_IS_IN_FLASH)	&& \
-	!defined(CONFIG_ENV_IS_IN_DATAFLASH)	&& \
 	!defined(CONFIG_ENV_IS_IN_MMC)		&& \
 	!defined(CONFIG_ENV_IS_IN_FAT)		&& \
 	!defined(CONFIG_ENV_IS_IN_EXT4)		&& \
@@ -53,9 +52,10 @@ DECLARE_GLOBAL_DATA_PTR;
 	!defined(CONFIG_ENV_IS_IN_SPI_FLASH)	&& \
 	!defined(CONFIG_ENV_IS_IN_REMOTE)	&& \
 	!defined(CONFIG_ENV_IS_IN_UBI)		&& \
+	!defined(CONFIG_ENV_IS_IN_BLK_DEV)	&& \
 	!defined(CONFIG_ENV_IS_NOWHERE)
-# error Define one of CONFIG_ENV_IS_IN_{EEPROM|FLASH|DATAFLASH|MMC|FAT|EXT4|\
-NAND|NVRAM|ONENAND|SATA|SPI_FLASH|REMOTE|UBI} or CONFIG_ENV_IS_NOWHERE
+# error Define one of CONFIG_ENV_IS_IN_{EEPROM|FLASH|MMC|FAT|EXT4|\
+NAND|NVRAM|ONENAND|SATA|SPI_FLASH|REMOTE|UBI|BLK_DEV} or CONFIG_ENV_IS_NOWHERE
 #endif
 
 /*
@@ -302,20 +302,23 @@ static int env_append(const char *varname, const char *varvalue)
 	int len = 0;
 	char *oldvalue, *newvalue;
 
+	debug("%s: varvalue = %s\n", __func__, varvalue);
+
 	/* before import into hashtable */
 	if (!(gd->flags & GD_FLG_ENV_READY) || !varname)
 		return 1;
+
+	if (env_exist(varname, varvalue))
+		return 0;
+
+	debug("%s: reall append: %s\n", __func__, varvalue);
 
 	if (varvalue)
 		len += strlen(varvalue);
 
 	oldvalue = env_get(varname);
-	if (oldvalue) {
+	if (oldvalue)
 		len += strlen(oldvalue);
-		/* Exist ! */
-		if (strstr(oldvalue, varvalue))
-			return 0;
-	}
 
 	newvalue = malloc(len + 2);
 	if (!newvalue) {
@@ -333,6 +336,7 @@ static int env_append(const char *varname, const char *varvalue)
 	if (varvalue)
 		strcat(newvalue, varvalue);
 
+	debug("%s: newvalue: %s\n", __func__, newvalue);
 	env_set(varname, newvalue);
 	free(newvalue);
 
@@ -399,7 +403,8 @@ static int env_replace(const char *varname, const char *substr,
 
 #define ARGS_ITEM_NUM	50
 
-int env_update(const char *varname, const char *varvalue)
+int env_update_filter(const char *varname, const char *varvalue,
+		      const char *ignore)
 {
 	/* 'a_' means "varargs_'; 'v_' means 'varvalue_' */
 	char *varargs;
@@ -419,6 +424,8 @@ int env_update(const char *varname, const char *varvalue)
 	varargs = env_get(varname);
 	if (!varargs) {
 		env_set(varname, varvalue);
+		if (ignore && strstr(varvalue, ignore))
+			env_delete(varname, ignore, 0);
 		return 0;
 	}
 
@@ -452,11 +459,23 @@ int env_update(const char *varname, const char *varvalue)
 	 */
 	v_item = strtok(v_string_tok, " ");
 	while (v_item && j < ARGS_ITEM_NUM) {
-		debug("%s: <v_item %d>: %s\n", __func__, j, v_item);
-		if (strstr(v_item, "="))
+		debug("%s: <v_item %d>: %s ", __func__, j, v_item);
+
+		/* filter ignore string */
+		if (ignore && strstr(v_item, ignore)) {
+			v_item = strtok(NULL, " ");
+			debug("...ignore\n");
+			continue;
+		}
+
+		if (strstr(v_item, "=")) {
+			debug("\n");
 			v_items[j++] = v_item;
-		else
+		} else {
+			debug("... do append\n");
 			env_append(varname, v_item);
+		}
+
 		v_item = strtok(NULL, " ");
 	}
 
@@ -500,15 +519,118 @@ int env_update(const char *varname, const char *varvalue)
 		}
 
 		/* Not find, just append */
-		if (!match)
+		if (!match) {
+			debug("%s: append '%s' to the '%s' end\n",
+			      __func__, v_item, varname);
 			env_append(varname, v_item);
-
+		}
 		match = false;
 		free(v_item_tok);
 	}
 
 	free(v_string_tok);
 	free(a_string_tok);
+
+	return 0;
+}
+
+int env_update(const char *varname, const char *varvalue)
+{
+	return env_update_filter(varname, varvalue, NULL);
+}
+
+#define VARVALUE_BUF_SIZE	512
+
+char *env_exist(const char *varname, const char *varvalue)
+{
+	int len;
+	char *oldvalue, *p;
+	char buf[VARVALUE_BUF_SIZE];
+
+	/* before import into hashtable */
+	if (!(gd->flags & GD_FLG_ENV_READY) || !varname)
+		return NULL;
+
+	oldvalue = env_get(varname);
+	if (oldvalue) {
+		if (strlen(varvalue) > VARVALUE_BUF_SIZE) {
+			printf("%s: '%s' is too long than 512\n",
+			       __func__, varvalue);
+			return NULL;
+		}
+
+		/* Match middle one ? */
+		snprintf(buf, VARVALUE_BUF_SIZE, " %s ", varvalue);
+		p = strstr(oldvalue, buf);
+		if (p) {
+			debug("%s: '%s' is already exist in '%s'(middle)\n",
+			      __func__, varvalue, varname);
+			return (p + 1);
+		} else {
+			debug("%s: not find in middle one\n", __func__);
+		}
+
+		/* Match last one ? */
+		snprintf(buf, VARVALUE_BUF_SIZE, " %s", varvalue);
+		p = strstr(oldvalue, buf);
+		if (p) {
+			if (*(p + strlen(varvalue) + 1) == '\0') {
+				debug("%s: '%s' is already exist in '%s'(last)\n",
+				      __func__, varvalue, varname);
+				return (p + 1);
+			}
+		} else {
+			debug("%s: not find in last one\n", __func__);
+		}
+
+		/* Match first one ? */
+		snprintf(buf, VARVALUE_BUF_SIZE, "%s ", varvalue);
+		p = strstr(oldvalue, buf);
+		if (p) {
+			len = strstr(p, " ") - oldvalue;
+			if (len == strlen(varvalue)) {
+				debug("%s: '%s' is already exist in '%s'(first)\n",
+				      __func__, varvalue, varname);
+				return p;
+			}
+		} else  {
+			debug("%s: not find in first one\n", __func__);
+		}
+	}
+
+	return NULL;
+}
+
+int env_delete(const char *varname, const char *varvalue, int complete_match)
+{
+	const char *str;
+	char *value, *start;
+
+	/* before import into hashtable */
+	if (!(gd->flags & GD_FLG_ENV_READY) || !varname)
+		return 1;
+
+	value = env_get(varname);
+	if (!value)
+		return 0;
+
+	start = complete_match ?
+		env_exist(varname, varvalue) : strstr(value, varvalue);
+	if (!start)
+		return 0;
+
+	/* varvalue is not the last property */
+	str = strstr(start, " ");
+	if (str) {
+		/* Terminate, so cmdline can be dest for strcat() */
+		*start = '\0';
+		/* +1 to skip white space */
+		strcat((char *)value, (str + 1));
+	/* varvalue is the last property */
+	} else {
+		/* skip white space */
+		*(start - 1) = '\0';
+	}
 
 	return 0;
 }
@@ -537,9 +659,9 @@ int env_set_ulong(const char *varname, ulong value)
  */
 int env_set_hex(const char *varname, ulong value)
 {
-	char str[17];
+	char str[19];
 
-	sprintf(str, "%lx", value);
+	sprintf(str, "0x%lx", value);
 	return env_set(varname, str);
 }
 
@@ -609,15 +731,18 @@ int do_env_ask(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 		sprintf(message, "Please enter '%s': ", argv[1]);
 	} else {
 		/* env_ask envname message1 ... messagen [size] */
-		for (i = 2, pos = 0; i < argc; i++) {
+		for (i = 2, pos = 0; i < argc && pos+1 < sizeof(message); i++) {
 			if (pos)
 				message[pos++] = ' ';
 
-			strcpy(message + pos, argv[i]);
+			strncpy(message + pos, argv[i], sizeof(message) - pos);
 			pos += strlen(argv[i]);
 		}
-		message[pos++] = ' ';
-		message[pos] = '\0';
+		if (pos < sizeof(message) - 1) {
+			message[pos++] = ' ';
+			message[pos] = '\0';
+		} else
+			message[CONFIG_SYS_CBSIZE - 1] = '\0';
 	}
 
 	if (size >= CONFIG_SYS_CBSIZE)
@@ -1143,7 +1268,7 @@ NXTARG:		;
 				H_MATCH_KEY | H_MATCH_IDENT,
 				&ptr, size, argc, argv);
 		if (len < 0) {
-			error("Cannot export environment: errno = %d\n", errno);
+			pr_err("Cannot export environment: errno = %d\n", errno);
 			return 1;
 		}
 		sprintf(buf, "%zX", (size_t)len);
@@ -1163,7 +1288,7 @@ NXTARG:		;
 			H_MATCH_KEY | H_MATCH_IDENT,
 			&res, ENV_SIZE, argc, argv);
 	if (len < 0) {
-		error("Cannot export environment: errno = %d\n", errno);
+		pr_err("Cannot export environment: errno = %d\n", errno);
 		return 1;
 	}
 
@@ -1298,7 +1423,7 @@ static int do_env_import(cmd_tbl_t *cmdtp, int flag,
 
 	if (himport_r(&env_htab, ptr, size, sep, del ? 0 : H_NOCLEAR,
 			crlf_is_lf, 0, NULL) == 0) {
-		error("Environment import failed: errno = %d\n", errno);
+		pr_err("Environment import failed: errno = %d\n", errno);
 		return 1;
 	}
 	gd->flags |= GD_FLG_ENV_READY;

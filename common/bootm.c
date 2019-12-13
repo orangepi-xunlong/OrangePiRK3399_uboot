@@ -50,16 +50,23 @@ static const void *boot_get_kernel(cmd_tbl_t *cmdtp, int flag, int argc,
 #ifdef CONFIG_LMB
 static void boot_start_lmb(bootm_headers_t *images)
 {
+
+	lmb_init(&images->lmb);
+#ifdef CONFIG_NR_DRAM_BANKS
+	int i;
+
+	for (i = 0; i < CONFIG_NR_DRAM_BANKS; i++) {
+		lmb_add(&images->lmb, gd->bd->bi_dram[i].start,
+			gd->bd->bi_dram[i].size);
+	}
+#else
 	ulong		mem_start;
 	phys_size_t	mem_size;
 
-	lmb_init(&images->lmb);
-
 	mem_start = env_get_bootm_low();
 	mem_size = env_get_bootm_size();
-
 	lmb_add(&images->lmb, (phys_addr_t)mem_start, mem_size);
-
+#endif
 	arch_lmb_reserve(&images->lmb);
 	board_lmb_reserve(&images->lmb);
 }
@@ -155,7 +162,7 @@ static int bootm_find_os(cmd_tbl_t *cmdtp, int flag, int argc,
 #ifdef CONFIG_ANDROID_BOOT_IMAGE
 	case IMAGE_FORMAT_ANDROID:
 		images.os.type = IH_TYPE_KERNEL;
-		images.os.comp = IH_COMP_NONE;
+		images.os.comp = android_image_get_comp(os_hdr);
 		images.os.os = IH_OS_LINUX;
 
 		images.os.end = android_image_get_end(os_hdr);
@@ -245,6 +252,7 @@ int bootm_find_images(int flag, int argc, char * const argv[])
 		return 1;
 	}
 	set_working_fdt_addr((ulong)images.ft_addr);
+	lmb_reserve(&images.lmb, (ulong)images.ft_addr, (ulong)images.ft_len);
 #endif
 
 #if IMAGE_ENABLE_FIT
@@ -335,6 +343,33 @@ static int handle_decomp_error(int comp_type, size_t uncomp_size,
 #endif
 
 	return BOOTM_ERR_RESET;
+}
+
+int bootm_parse_comp(const unsigned char *hdr)
+{
+#if defined(CONFIG_ARM) && !defined(CONFIG_ARM64)
+	ulong start, end;
+
+	if (!bootz_setup((ulong)hdr, &start, &end))
+		return IH_COMP_ZIMAGE;
+#endif
+#if defined(CONFIG_LZ4)
+	if (lz4_is_valid_header(hdr))
+		return IH_COMP_LZ4;
+#endif
+#if defined(CONFIG_LZO)
+	if (lzop_is_valid_header(hdr))
+		return IH_COMP_LZO;
+#endif
+#if defined(CONFIG_GZIP)
+	if (gzip_parse_header(hdr, 0xffff) > 0)
+		return IH_COMP_GZIP;
+#endif
+#if defined(CONFIG_BZIP2)
+	if ((hdr[0] == 'B') && (hdr[1] == 'Z') && (hdr[2] == 'h'))
+		return IH_COMP_BZIP2;
+#endif
+	return IH_COMP_NONE;
 }
 
 int bootm_decomp_image(int comp, ulong load, ulong image_start, int type,
@@ -637,6 +672,12 @@ int do_bootm_states(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[],
 			ret = 0;
 	}
 
+	/* Resever memory before any lmb_alloc, as early as possible */
+#if IMAGE_ENABLE_OF_LIBFDT && defined(CONFIG_LMB)
+	if (!ret && ((states & BOOTM_STATE_RAMDISK) ||
+	    (states & BOOTM_STATE_FDT)))
+		boot_fdt_add_mem_rsv_regions(&images->lmb, images->ft_addr);
+#endif
 	/* Relocate the ramdisk */
 #ifdef CONFIG_SYS_BOOT_RAMDISK_HIGH
 	if (!ret && (states & BOOTM_STATE_RAMDISK)) {
@@ -652,7 +693,6 @@ int do_bootm_states(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[],
 #endif
 #if IMAGE_ENABLE_OF_LIBFDT && defined(CONFIG_LMB)
 	if (!ret && (states & BOOTM_STATE_FDT)) {
-		boot_fdt_add_mem_rsv_regions(&images->lmb, images->ft_addr);
 		ret = boot_relocate_fdt(&images->lmb, &images->ft_addr,
 					&images->ft_len);
 	}
@@ -810,9 +850,6 @@ static const void *boot_get_kernel(cmd_tbl_t *cmdtp, int flag, int argc,
 
 	bootstage_mark(BOOTSTAGE_ID_CHECK_MAGIC);
 
-	/* copy from dataflash if needed */
-	img_addr = genimg_get_image(img_addr);
-
 	/* check image type, for FIT images get FIT kernel node */
 	*os_data = *os_len = 0;
 	buf = map_sysmem(img_addr, 0);
@@ -841,8 +878,9 @@ static const void *boot_get_kernel(cmd_tbl_t *cmdtp, int flag, int argc,
 			*os_len = image_get_data_size(hdr);
 			break;
 		default:
-			printf("Wrong Image Type for %s command\n",
-			       cmdtp->name);
+			if (cmdtp)
+				printf("Wrong Image Type for %s command\n",
+				       cmdtp->name);
 			bootstage_error(BOOTSTAGE_ID_CHECK_IMAGETYPE);
 			return NULL;
 		}
@@ -886,7 +924,9 @@ static const void *boot_get_kernel(cmd_tbl_t *cmdtp, int flag, int argc,
 		break;
 #endif
 	default:
-		printf("Wrong Image Format for %s command\n", cmdtp->name);
+		if (cmdtp)
+			printf("Wrong Image Format for %s command\n",
+			       cmdtp->name);
 		bootstage_error(BOOTSTAGE_ID_FIT_KERNEL_INFO);
 		return NULL;
 	}

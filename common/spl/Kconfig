@@ -125,6 +125,19 @@ config SPL_DISPLAY_PRINT
 	  banner ("U-Boot SPL ..."). This function should be provided by
 	  the board.
 
+config SPL_SKIP_RELOCATE
+	bool "Skip code relocation in SPL"
+	default y
+	help
+	  The SPL code will be relocated to a high memory if you say no here.
+	  Only ARM64 and PowerPC SPL support relocate now.
+
+config SPL_RELOC_TEXT_BASE
+	hex "Address the SPL relocate to"
+	depends on !SPL_SKIP_RELOCATE
+	help
+	  The address on the ram where the SPL relocate to.
+
 config SYS_MMCSD_RAW_MODE_U_BOOT_USE_SECTOR
 	bool "MMC raw mode: by sector"
 	default y if ARCH_SUNXI || ARCH_DAVINCI || ARCH_UNIPHIER ||ARCH_MX6 || \
@@ -141,11 +154,12 @@ config SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR
 	default 0x50 if ARCH_SUNXI
 	default 0x75 if ARCH_DAVINCI
 	default 0x8a if ARCH_MX6
-	default 0x100 if ARCH_ROCKCHIP || ARCH_UNIPHIER
+	default 0x100 if ARCH_UNIPHIER
 	default 0x140 if ARCH_MVEBU
 	default 0x200 if ARCH_SOCFPGA || ARCH_AT91
 	default 0x300 if ARCH_ZYNQ || ARCH_KEYSTONE || OMAP34XX || OMAP44XX || \
 		         OMAP54XX || AM33XX || AM43XX
+	default 0x4000 if ARCH_ROCKCHIP
 	help
 	  Address on the MMC to load U-Boot from, when the MMC is being used
 	  in raw mode. Units: MMC sectors (1 sector = 512 bytes).
@@ -225,6 +239,22 @@ config SPL_SHA256_SUPPORT
 	  input data. Use this for the highest security. Note that only the
 	  SHA256 variant is supported: SHA512 and others are not currently
 	  supported in U-Boot.
+
+config SPL_FIT_IMAGE_TINY
+	bool "Remove functionality from SPL FIT loading to reduce size"
+	depends on SPL_FIT
+	default y if MACH_SUN50I || MACH_SUN50I_H5
+	default y if ARCH_OMAP2PLUS
+	help
+	  Enable this to reduce the size of the FIT image loading code
+	  in SPL, if space for the SPL binary is very tight.
+
+	  This removes the detection of image types (which forces the
+	  first image to be treated as having a U-Boot style calling
+	  convention) and skips the recording of each loaded payload
+	  (i.e. loadable) into the FDT (modifying the loaded FDT to
+	  ensure this information is available to the next image
+	  invoked).
 
 config SPL_CPU_SUPPORT
 	bool "Support CPU drivers"
@@ -692,12 +722,12 @@ config SPL_YMODEM_SUPPORT
 	  means of transmitting U-Boot over a serial line for using in SPL,
 	  with a checksum to ensure correctness.
 
-config SPL_ATF_SUPPORT
+config SPL_ATF
 	bool "Support ARM Trusted Firmware"
 	depends on ARM64
 	help
-	  ATF(ARM Trusted Firmware) is a component for ARM arch64 which
-	  is loaded by SPL(which is considered as BL2 in ATF terminology).
+	  ATF(ARM Trusted Firmware) is a component for ARM AArch64 which
+	  is loaded by SPL (which is considered as BL2 in ATF terminology).
 	  More detail at: https://github.com/ARM-software/arm-trusted-firmware
 
 config SPL_OPTEE_SUPPORT
@@ -707,6 +737,45 @@ config SPL_OPTEE_SUPPORT
 	  OP-TEE is an open source Trusted OS  which is loaded by SPL.
 	  More detail at: https://github.com/OP-TEE/optee_os
 
+config SPL_ATF_NO_PLATFORM_PARAM
+        bool "Pass no platform parameter"
+	depends on SPL_ATF
+	help
+	  While we expect to call a pointer to a valid FDT (or NULL)
+	  as the platform parameter to an ATF, some ATF versions are
+	  not U-Boot aware and have an insufficiently robust parameter
+	  validation to gracefully reject a FDT being passed.
+
+	  If this option is enabled, the spl_atf os-type handler will
+	  always pass NULL for the platform parameter.
+
+	  If your ATF is affected, say Y.
+
+config SPL_OPTEE
+	bool "Support OP-TEE Trusted OS"
+	depends on ARM
+	help
+	  OP-TEE is an open source Trusted OS  which is loaded by SPL.
+	  More detail at: https://github.com/OP-TEE/optee_os
+
+config SPL_LOAD_RKFW
+	bool "SPL support load rockchip firmware images"
+	depends on SPL
+	help
+	  This enables SPL support load rockchip firmware images.
+	  Please define both RKFW_TRUST_SECTOR and RKFW_U_BOOT_SECTOR
+	  for trust and U-Boot images.
+
+config RKFW_TRUST_SECTOR
+	hex "rockchip trust image load sector"
+	depends on SPL_LOAD_RKFW
+	default 0x6000
+
+config RKFW_U_BOOT_SECTOR
+	hex "rockchip uboot image load sector"
+	depends on SPL_LOAD_RKFW
+	default 0x4000
+
 config TPL
 	bool
 	depends on SUPPORT_TPL
@@ -715,6 +784,13 @@ config TPL
 	  If you want to build TPL as well as the normal image and SPL, say Y.
 
 if TPL
+
+config TPL_BOARD_INIT
+	bool "Call board-specific initialization in TPL"
+	help
+	  If this option is enabled, U-Boot will call the function
+	  spl_board_init() from board_init_r(). This function should be
+	  provided by the board.
 
 config TPL_LDSCRIPT
         string "Linker script for the TPL stage"
@@ -806,6 +882,11 @@ config TPL_LIBGENERIC_SUPPORT
 	help
 	  Enable support for generic U-Boot libraries within TPL. See
 	  SPL_LIBGENERIC_SUPPORT for details.
+
+config TPL_TINY_FRAMEWORK
+	bool "Support not to use spl framework in TPL"
+	help
+	  Enable support for not using spl framework in TPL, to reduce the TPL size.
 
 config TPL_MPC8XXX_INIT_DDR_SUPPORT
 	bool "Support MPC8XXX DDR init"

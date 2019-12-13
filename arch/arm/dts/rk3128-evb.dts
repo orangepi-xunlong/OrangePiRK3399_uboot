@@ -7,14 +7,11 @@
 /dts-v1/;
 
 #include "rk3128.dtsi"
+#include "rk3128-u-boot.dtsi"
 
 / {
 	model = "Rockchip RK3128 Evaluation board";
 	compatible = "rockchip,rk3128-evb", "rockchip,rk3128";
-
-	chosen {
-		stdout-path = &uart2;
-	};
 
 	vcc5v0_otg: vcc5v0-otg-drv {
 		compatible = "regulator-fixed";
@@ -62,6 +59,10 @@
 	status = "okay";
 };
 
+&uart2 {
+	status = "okay";
+};
+
 &usb_host_ehci {
 	status = "okay";
 };
@@ -82,7 +83,7 @@
 
 &pinctrl {
 	usb_otg {
-		otg_vbus_drv: host-vbus-drv {
+		otg_vbus_drv: otg-vbus-drv {
 			rockchip,pins = <0 26 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};

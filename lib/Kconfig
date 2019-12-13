@@ -35,6 +35,12 @@ config SYS_HZ
 	  get_timer() must operate in milliseconds and this option must be
 	  set to 1000.
 
+config SYS_STACK_SIZE
+	hex
+	default 0x200000
+	help
+	 The system stack size.
+
 config USE_TINY_PRINTF
 	bool "Enable tiny printf() version"
 	help
@@ -44,6 +50,16 @@ config USE_TINY_PRINTF
 	  reduces the code size by about 2.5KiB on armv7.
 
 	  The supported format specifiers are %c, %s, %u/%d and %x.
+
+config PANIC_HANG
+	bool "Do not reset the system on fatal error"
+	help
+	  Define this option to stop the system in case of a fatal error,
+	  so that you have to reset it manually. This is probably NOT a good
+	  idea for an embedded system where you want the system to reboot
+	  automatically as fast as possible, but it may be useful during
+	  development since you can try to debug the conditions that lead to
+	  the situation.
 
 config REGEX
 	bool "Enable regular expression support"
@@ -82,6 +98,18 @@ config RBTREE
 
 config BITREVERSE
 	bool
+
+config SYSMEM
+	bool "System memory management"
+	default y
+	help
+	  This enables support for system permanent memory management.
+
+config BIDRAM
+	bool "GD board bi_dram[] memory management"
+	default y
+	help
+	  This enables support for GD board bi_dram[] memory management.
 
 source lib/dhry/Kconfig
 
@@ -149,6 +177,9 @@ config SHA_PROG_HW_ACCEL
 config MD5
 	bool
 
+config CRC32C
+	bool
+
 endmenu
 
 menu "Compression Support"
@@ -179,6 +210,23 @@ config LZO
 	bool "Enable LZO decompression support"
 	help
 	  This enables support for LZO compression algorithm.r
+
+config SPL_LZO
+	bool "Enable LZO decompression support in SPL"
+	help
+	  This enables support for LZO compression algorithm in the SPL.
+
+config SPL_GZIP
+	bool "Enable gzip decompression support for SPL build"
+	select SPL_ZLIB
+	help
+	  This enables support for GZIP compression altorithm for SPL boot.
+
+config SPL_ZLIB
+	bool
+	help
+	  This enables compression lib for SPL boot.
+
 endmenu
 
 config ERRNO_STR
@@ -268,5 +316,10 @@ endmenu
 
 source lib/efi/Kconfig
 source lib/efi_loader/Kconfig
-
+source lib/avb/libavb/Kconfig
+source lib/avb/libavb_ab/Kconfig
+source lib/avb/libavb_atx/Kconfig
+source lib/avb/libavb_user/Kconfig
+source lib/avb/rk_avb_user/Kconfig
+source lib/optee_clientApi/Kconfig
 endmenu

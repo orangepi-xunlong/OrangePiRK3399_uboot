@@ -17,6 +17,9 @@
 #include <clk.h>
 #include <asm/arch/clock.h>
 #include <linux/err.h>
+#include <dm/device.h>
+#include <dm/read.h>
+#include <syscon.h>
 
 #include "rockchip_display.h"
 #include "rockchip_crtc.h"
@@ -28,12 +31,61 @@ static inline int us_to_vertical_line(struct drm_display_mode *mode, int us)
 	return us * mode->clock / mode->htotal / 1000;
 }
 
+static int to_vop_csc_mode(int csc_mode)
+{
+	switch (csc_mode) {
+	case V4L2_COLORSPACE_SMPTE170M:
+		return CSC_BT601L;
+	case V4L2_COLORSPACE_REC709:
+	case V4L2_COLORSPACE_DEFAULT:
+		return CSC_BT709L;
+	case V4L2_COLORSPACE_JPEG:
+		return CSC_BT601F;
+	case V4L2_COLORSPACE_BT2020:
+		return CSC_BT2020;
+	default:
+		return CSC_BT709L;
+	}
+}
+
+static bool is_yuv_output(uint32_t bus_format)
+{
+	switch (bus_format) {
+	case MEDIA_BUS_FMT_YUV8_1X24:
+	case MEDIA_BUS_FMT_YUV10_1X30:
+	case MEDIA_BUS_FMT_UYYVYY8_0_5X24:
+	case MEDIA_BUS_FMT_UYYVYY10_0_5X30:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool is_uv_swap(uint32_t bus_format, uint32_t output_mode)
+{
+	/*
+	 * FIXME:
+	 *
+	 * There is no media type for YUV444 output,
+	 * so when out_mode is AAAA or P888, assume output is YUV444 on
+	 * yuv format.
+	 *
+	 * From H/W testing, YUV444 mode need a rb swap.
+	 */
+	if ((bus_format == MEDIA_BUS_FMT_YUV8_1X24 ||
+	     bus_format == MEDIA_BUS_FMT_YUV10_1X30) &&
+	    (output_mode == ROCKCHIP_OUT_MODE_AAAA ||
+	     output_mode == ROCKCHIP_OUT_MODE_P888))
+		return true;
+	else
+		return false;
+}
+
 static int rockchip_vop_init_gamma(struct vop *vop, struct display_state *state)
 {
 	struct crtc_state *crtc_state = &state->crtc_state;
 	struct connector_state *conn_state = &state->conn_state;
 	u32 *lut = conn_state->gamma.lut;
-	int node = crtc_state->node;
 	fdt_size_t lut_size;
 	int i, lut_len;
 	u32 *lut_regs;
@@ -41,14 +93,12 @@ static int rockchip_vop_init_gamma(struct vop *vop, struct display_state *state)
 	if (!conn_state->gamma.lut)
 		return 0;
 
-	i = fdt_stringlist_search(state->blob, node, "reg-names", "gamma_lut");
+	i = dev_read_stringlist_search(crtc_state->dev, "reg-names", "gamma_lut");
 	if (i < 0) {
 		printf("Warning: vop not support gamma\n");
 		return 0;
 	}
-	lut_regs = (u32 *)fdtdec_get_addr_size_auto_noparent(state->blob,
-							     node, "reg", i,
-							     &lut_size, false);
+	lut_regs = (u32 *)dev_read_addr_size(crtc_state->dev, "reg", &lut_size);
 	if (lut_regs == (u32 *)FDT_ADDR_T_NONE) {
 		printf("failed to get gamma lut register\n");
 		return 0;
@@ -83,6 +133,66 @@ static int rockchip_vop_init_gamma(struct vop *vop, struct display_state *state)
 	return 0;
 }
 
+static void vop_post_config(struct display_state *state, struct vop *vop)
+{
+	struct connector_state *conn_state = &state->conn_state;
+	struct drm_display_mode *mode = &conn_state->mode;
+	u16 vtotal = mode->crtc_vtotal;
+	u16 hact_st = mode->crtc_htotal - mode->crtc_hsync_start;
+	u16 vact_st = mode->crtc_vtotal - mode->crtc_vsync_start;
+	u16 hdisplay = mode->crtc_hdisplay;
+	u16 vdisplay = mode->crtc_vdisplay;
+	u16 hsize = hdisplay * (conn_state->overscan.left_margin + conn_state->overscan.right_margin) / 200;
+	u16 vsize = vdisplay * (conn_state->overscan.top_margin + conn_state->overscan.bottom_margin) / 200;
+	u16 hact_end, vact_end;
+	u32 val;
+
+	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+		vsize = round_down(vsize, 2);
+
+	hact_st += hdisplay * (100 - conn_state->overscan.left_margin) / 200;
+	hact_end = hact_st + hsize;
+	val = hact_st << 16;
+	val |= hact_end;
+
+	VOP_CTRL_SET(vop, hpost_st_end, val);
+	vact_st += vdisplay * (100 - conn_state->overscan.top_margin) / 200;
+	vact_end = vact_st + vsize;
+	val = vact_st << 16;
+	val |= vact_end;
+	VOP_CTRL_SET(vop, vpost_st_end, val);
+	val = scl_cal_scale2(vdisplay, vsize) << 16;
+	val |= scl_cal_scale2(hdisplay, hsize);
+	VOP_CTRL_SET(vop, post_scl_factor, val);
+#define POST_HORIZONTAL_SCALEDOWN_EN(x)		((x) << 0)
+#define POST_VERTICAL_SCALEDOWN_EN(x)		((x) << 1)
+	VOP_CTRL_SET(vop, post_scl_ctrl,
+		     POST_HORIZONTAL_SCALEDOWN_EN(hdisplay != hsize) |
+		     POST_VERTICAL_SCALEDOWN_EN(vdisplay != vsize));
+	if (mode->flags & DRM_MODE_FLAG_INTERLACE) {
+		u16 vact_st_f1 = vtotal + vact_st + 1;
+		u16 vact_end_f1 = vact_st_f1 + vsize;
+
+		val = vact_st_f1 << 16 | vact_end_f1;
+		VOP_CTRL_SET(vop, vpost_st_end_f1, val);
+	}
+}
+
+static void vop_mcu_mode(struct display_state *state, struct vop *vop)
+{
+	struct crtc_state *crtc_state = &state->crtc_state;
+
+	VOP_CTRL_SET(vop, mcu_clk_sel, 1);
+	VOP_CTRL_SET(vop, mcu_type, 1);
+
+	VOP_CTRL_SET(vop, mcu_hold_mode, 1);
+	VOP_CTRL_SET(vop, mcu_pix_total, crtc_state->mcu_timing.mcu_pix_total);
+	VOP_CTRL_SET(vop, mcu_cs_pst, crtc_state->mcu_timing.mcu_cs_pst);
+	VOP_CTRL_SET(vop, mcu_cs_pend, crtc_state->mcu_timing.mcu_cs_pend);
+	VOP_CTRL_SET(vop, mcu_rw_pst, crtc_state->mcu_timing.mcu_rw_pst);
+	VOP_CTRL_SET(vop, mcu_rw_pend, crtc_state->mcu_timing.mcu_rw_pend);
+}
+
 static int rockchip_vop_init(struct display_state *state)
 {
 	struct crtc_state *crtc_state = &state->crtc_state;
@@ -91,19 +201,22 @@ static int rockchip_vop_init(struct display_state *state)
 	const struct rockchip_crtc *crtc = crtc_state->crtc;
 	const struct vop_data *vop_data = crtc->data;
 	struct vop *vop;
-	u16 hsync_len = mode->hsync_end - mode->hsync_start;
-	u16 hdisplay = mode->hdisplay;
-	u16 htotal = mode->htotal;
-	u16 hact_st = mode->htotal - mode->hsync_start;
+	u16 hsync_len = mode->crtc_hsync_end - mode->crtc_hsync_start;
+	u16 hdisplay = mode->crtc_hdisplay;
+	u16 htotal = mode->crtc_htotal;
+	u16 hact_st = mode->crtc_htotal - mode->crtc_hsync_start;
 	u16 hact_end = hact_st + hdisplay;
-	u16 vdisplay = mode->vdisplay;
-	u16 vtotal = mode->vtotal;
-	u16 vsync_len = mode->vsync_end - mode->vsync_start;
-	u16 vact_st = mode->vtotal - mode->vsync_start;
+	u16 vdisplay = mode->crtc_vdisplay;
+	u16 vtotal = mode->crtc_vtotal;
+	u16 vsync_len = mode->crtc_vsync_end - mode->crtc_vsync_start;
+	u16 vact_st = mode->crtc_vtotal - mode->crtc_vsync_start;
 	u16 vact_end = vact_st + vdisplay;
-	struct clk dclk, aclk;
-	u32 val;
+	struct clk dclk;
+	u32 val, act_end;
 	int ret;
+	bool yuv_overlay = false, post_r2y_en = false, post_y2r_en = false;
+	u16 post_csc_mode;
+	bool dclk_inv;
 
 	vop = malloc(sizeof(*vop));
 	if (!vop)
@@ -111,19 +224,27 @@ static int rockchip_vop_init(struct display_state *state)
 	memset(vop, 0, sizeof(*vop));
 
 	crtc_state->private = vop;
-	vop->regs = (void *)fdtdec_get_addr_size_auto_noparent(state->blob,
-					crtc_state->node, "reg", 0, NULL, false);
+	vop->regs = dev_read_addr_ptr(crtc_state->dev);
 	vop->regsbak = malloc(vop_data->reg_len);
 	vop->win = vop_data->win;
 	vop->win_offset = vop_data->win_offset;
 	vop->ctrl = vop_data->ctrl;
-	vop->line_flag = vop_data->line_flag;
-	vop->version = vop_data->version;
+	vop->grf = syscon_get_first_range(ROCKCHIP_SYSCON_GRF);
+	if (vop->grf <= 0)
+		printf("%s: Get syscon grf failed (ret=%p)\n",
+		      __func__, vop->grf);
 
-	/*
-	 * TODO:
-	 * Set Dclk pll parent
-	 */
+	vop->grf_ctrl = vop_data->grf_ctrl;
+	vop->line_flag = vop_data->line_flag;
+	vop->csc_table = vop_data->csc_table;
+	vop->win_csc = vop_data->win_csc;
+	vop->version = vop_data->version;
+	vop->max_output = vop_data->max_output;
+
+	/* Process 'assigned-{clocks/clock-parents/clock-rates}' properties */
+	ret = clk_set_defaults(crtc_state->dev);
+	if (ret)
+		debug("%s clk_set_defaults failed %d\n", __func__, ret);
 
 	ret = clk_get_by_name(crtc_state->dev, "dclk_vop", &dclk);
 	if (!ret)
@@ -133,20 +254,23 @@ static int rockchip_vop_init(struct display_state *state)
 		return ret;
 	}
 
-	ret = clk_get_by_name(crtc_state->dev, "aclk_vop", &aclk);
-	if (!ret)
-		ret = clk_set_rate(&aclk, 400 * 1000 * 1000);
-	if (IS_ERR_VALUE(ret))
-		printf("%s: Failed to set aclk: ret=%d\n", __func__, ret);
-
 	memcpy(vop->regsbak, vop->regs, vop_data->reg_len);
 
 	rockchip_vop_init_gamma(vop, state);
 
 	VOP_CTRL_SET(vop, global_regdone_en, 1);
+	VOP_CTRL_SET(vop, axi_outstanding_max_num, 30);
+	VOP_CTRL_SET(vop, axi_max_outstanding_en, 1);
+	VOP_CTRL_SET(vop, reg_done_frm, 1);
 	VOP_CTRL_SET(vop, win_gate[0], 1);
 	VOP_CTRL_SET(vop, win_gate[1], 1);
+	VOP_CTRL_SET(vop, win_channel[0], 0x12);
+	VOP_CTRL_SET(vop, win_channel[1], 0x34);
+	VOP_CTRL_SET(vop, win_channel[2], 0x56);
 	VOP_CTRL_SET(vop, dsp_blank, 0);
+
+	dclk_inv = (mode->flags & DRM_MODE_FLAG_PPIXDATA) ? 0 : 1;
+	VOP_CTRL_SET(vop, dclk_pol, dclk_inv);
 
 	val = 0x8;
 	val |= (mode->flags & DRM_MODE_FLAG_NHSYNC) ? 0 : 1;
@@ -157,22 +281,49 @@ static int rockchip_vop_init(struct display_state *state)
 	case DRM_MODE_CONNECTOR_LVDS:
 		VOP_CTRL_SET(vop, rgb_en, 1);
 		VOP_CTRL_SET(vop, rgb_pin_pol, val);
+		VOP_CTRL_SET(vop, rgb_dclk_pol, dclk_inv);
+		VOP_CTRL_SET(vop, lvds_en, 1);
+		VOP_CTRL_SET(vop, lvds_pin_pol, val);
+		VOP_CTRL_SET(vop, lvds_dclk_pol, dclk_inv);
+		if (!IS_ERR_OR_NULL(vop->grf))
+			VOP_GRF_SET(vop, grf_dclk_inv, !dclk_inv);
 		break;
 	case DRM_MODE_CONNECTOR_eDP:
 		VOP_CTRL_SET(vop, edp_en, 1);
 		VOP_CTRL_SET(vop, edp_pin_pol, val);
+		VOP_CTRL_SET(vop, edp_dclk_pol, dclk_inv);
 		break;
 	case DRM_MODE_CONNECTOR_HDMIA:
 		VOP_CTRL_SET(vop, hdmi_en, 1);
 		VOP_CTRL_SET(vop, hdmi_pin_pol, val);
+		VOP_CTRL_SET(vop, hdmi_dclk_pol, 1);
 		break;
 	case DRM_MODE_CONNECTOR_DSI:
 		VOP_CTRL_SET(vop, mipi_en, 1);
 		VOP_CTRL_SET(vop, mipi_pin_pol, val);
+		VOP_CTRL_SET(vop, mipi_dclk_pol, dclk_inv);
 		VOP_CTRL_SET(vop, mipi_dual_channel_en,
 			!!(conn_state->output_type & ROCKCHIP_OUTPUT_DSI_DUAL_CHANNEL));
 		VOP_CTRL_SET(vop, data01_swap,
 			!!(conn_state->output_type & ROCKCHIP_OUTPUT_DSI_DUAL_LINK));
+		break;
+	case DRM_MODE_CONNECTOR_DisplayPort:
+		VOP_CTRL_SET(vop, dp_dclk_pol, 0);
+		VOP_CTRL_SET(vop, dp_pin_pol, val);
+		VOP_CTRL_SET(vop, dp_en, 1);
+		break;
+	case DRM_MODE_CONNECTOR_TV:
+		if (vdisplay == CVBS_PAL_VDISPLAY)
+			VOP_CTRL_SET(vop, tve_sw_mode, 1);
+		else
+			VOP_CTRL_SET(vop, tve_sw_mode, 0);
+		VOP_CTRL_SET(vop, tve_dclk_pol, 1);
+		VOP_CTRL_SET(vop, tve_dclk_en, 1);
+		/* use the same pol reg with hdmi */
+		VOP_CTRL_SET(vop, hdmi_pin_pol, val);
+		VOP_CTRL_SET(vop, sw_genlock, 1);
+		VOP_CTRL_SET(vop, sw_uv_offset_en, 1);
+		VOP_CTRL_SET(vop, dither_up, 1);
 		break;
 	default:
 		printf("unsupport connector_type[%d]\n", conn_state->type);
@@ -188,9 +339,21 @@ static int rockchip_vop_init(struct display_state *state)
 		break;
 	case MEDIA_BUS_FMT_RGB666_1X18:
 	case MEDIA_BUS_FMT_RGB666_1X24_CPADHI:
+	case MEDIA_BUS_FMT_RGB666_1X7X3_SPWG:
+	case MEDIA_BUS_FMT_RGB666_1X7X3_JEIDA:
 		val = DITHER_DOWN_EN(1) | DITHER_DOWN_MODE(RGB888_TO_RGB666);
 		break;
+	case MEDIA_BUS_FMT_YUV8_1X24:
+	case MEDIA_BUS_FMT_UYYVYY8_0_5X24:
+		val = DITHER_DOWN_EN(0) | PRE_DITHER_DOWN_EN(1);
+		break;
+	case MEDIA_BUS_FMT_YUV10_1X30:
+	case MEDIA_BUS_FMT_UYYVYY10_0_5X30:
+		val = DITHER_DOWN_EN(0) | PRE_DITHER_DOWN_EN(0);
+		break;
 	case MEDIA_BUS_FMT_RGB888_1X24:
+	case MEDIA_BUS_FMT_RGB888_1X7X4_SPWG:
+	case MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA:
 	default:
 		val = DITHER_DOWN_EN(0) | PRE_DITHER_DOWN_EN(0);
 		break;
@@ -202,21 +365,89 @@ static int rockchip_vop_init(struct display_state *state)
 	val |= DITHER_DOWN_MODE_SEL(DITHER_DOWN_ALLEGRO);
 	VOP_CTRL_SET(vop, dither_down, val);
 
+	VOP_CTRL_SET(vop, dclk_ddr,
+		     conn_state->output_mode == ROCKCHIP_OUT_MODE_YUV420 ? 1 : 0);
+	VOP_CTRL_SET(vop, hdmi_dclk_out_en,
+		     conn_state->output_mode == ROCKCHIP_OUT_MODE_YUV420 ? 1 : 0);
+
+	if (is_uv_swap(conn_state->bus_format, conn_state->output_mode))
+		VOP_CTRL_SET(vop, dsp_data_swap, DSP_RB_SWAP);
+	else
+		VOP_CTRL_SET(vop, dsp_data_swap, 0);
+
 	VOP_CTRL_SET(vop, out_mode, conn_state->output_mode);
+
+	if (VOP_CTRL_SUPPORT(vop, overlay_mode)) {
+		yuv_overlay = is_yuv_output(conn_state->bus_format);
+		VOP_CTRL_SET(vop, overlay_mode, yuv_overlay);
+	}
+	/*
+	 * todo: r2y for win csc
+	 */
+	VOP_CTRL_SET(vop, dsp_out_yuv, is_yuv_output(conn_state->bus_format));
+
+	if (yuv_overlay) {
+		if (!is_yuv_output(conn_state->bus_format))
+			post_y2r_en = true;
+	} else {
+		if (is_yuv_output(conn_state->bus_format))
+			post_r2y_en = true;
+	}
+
+	crtc_state->yuv_overlay = yuv_overlay;
+	post_csc_mode = to_vop_csc_mode(conn_state->color_space);
+	VOP_CTRL_SET(vop, bcsh_r2y_en, post_r2y_en);
+	VOP_CTRL_SET(vop, bcsh_y2r_en, post_y2r_en);
+	VOP_CTRL_SET(vop, bcsh_r2y_csc_mode, post_csc_mode);
+	VOP_CTRL_SET(vop, bcsh_y2r_csc_mode, post_csc_mode);
+
+	/*
+	 * Background color is 10bit depth if vop version >= 3.5
+	 */
+	if (!is_yuv_output(conn_state->bus_format))
+		val = 0;
+	else if (VOP_MAJOR(vop->version) == 3 &&
+		 VOP_MINOR(vop->version) >= 5)
+		val = 0x20010200;
+	else
+		val = 0x801080;
+	VOP_CTRL_SET(vop, dsp_background, val);
+
 	VOP_CTRL_SET(vop, htotal_pw, (htotal << 16) | hsync_len);
 	val = hact_st << 16;
 	val |= hact_end;
 	VOP_CTRL_SET(vop, hact_st_end, val);
-	VOP_CTRL_SET(vop, hpost_st_end, val);
-	VOP_CTRL_SET(vop, vtotal_pw, (vtotal << 16) | vsync_len);
 	val = vact_st << 16;
 	val |= vact_end;
 	VOP_CTRL_SET(vop, vact_st_end, val);
-	VOP_CTRL_SET(vop, vpost_st_end, val);
-	VOP_CTRL_SET(vop, standby, 1);
-	VOP_LINE_FLAG_SET(vop, line_flag_num[0], vact_end - 3);
+	if (mode->flags & DRM_MODE_FLAG_INTERLACE) {
+		u16 vact_st_f1 = vtotal + vact_st + 1;
+		u16 vact_end_f1 = vact_st_f1 + vdisplay;
+
+		val = vact_st_f1 << 16 | vact_end_f1;
+		VOP_CTRL_SET(vop, vact_st_end_f1, val);
+
+		val = vtotal << 16 | (vtotal + vsync_len);
+		VOP_CTRL_SET(vop, vs_st_end_f1, val);
+		VOP_CTRL_SET(vop, dsp_interlace, 1);
+		VOP_CTRL_SET(vop, p2i_en, 1);
+		vtotal += vtotal + 1;
+		act_end = vact_end_f1;
+	} else {
+		VOP_CTRL_SET(vop, dsp_interlace, 0);
+		VOP_CTRL_SET(vop, p2i_en, 0);
+		act_end = vact_end;
+	}
+	VOP_CTRL_SET(vop, vtotal_pw, (vtotal << 16) | vsync_len);
+	vop_post_config(state, vop);
+	VOP_CTRL_SET(vop, core_dclk_div,
+		     !!(mode->flags & DRM_MODE_FLAG_DBLCLK));
+
+	VOP_LINE_FLAG_SET(vop, line_flag_num[0], act_end - 3);
 	VOP_LINE_FLAG_SET(vop, line_flag_num[1],
-			  vact_end - us_to_vertical_line(mode, 1000));
+			  act_end - us_to_vertical_line(mode, 1000));
+	if (state->crtc_state.mcu_timing.mcu_pix_total > 0)
+		vop_mcu_mode(state, vop);
 	vop_cfg_done(vop);
 
 	return 0;
@@ -273,8 +504,9 @@ static void scl_vop_cal_scl_fac(struct vop *vop,
 	if (!vop->win->scl)
 		return;
 
-	if (dst_w > 3840) {
-		printf("Maximum destination width (3840) exceeded\n");
+	if (dst_w > vop->max_output.width) {
+		printf("Maximum destination width %d exceeded\n",
+		       vop->max_output.width);
 		return;
 	}
 
@@ -359,6 +591,54 @@ static void scl_vop_cal_scl_fac(struct vop *vop,
 	}
 }
 
+static void vop_load_csc_table(struct vop *vop, u32 offset, const u32 *table)
+{
+	int i;
+
+	/*
+	 * so far the csc offset is not 0 and in the feature the csc offset
+	 * impossible be 0, so when the offset is 0, should return here.
+	 */
+	if (!table || offset == 0)
+		return;
+
+	for (i = 0; i < 8; i++)
+		vop_writel(vop, offset + i * 4, table[i]);
+}
+
+static int rockchip_vop_setup_csc_table(struct display_state *state)
+{
+	struct crtc_state *crtc_state = &state->crtc_state;
+	struct connector_state *conn_state = &state->conn_state;
+	struct vop *vop = crtc_state->private;
+	const uint32_t *csc_table = NULL;
+
+	if (!vop->csc_table || !crtc_state->yuv_overlay)
+		return 0;
+	/* todo: only implement r2y*/
+	switch (conn_state->color_space) {
+	case V4L2_COLORSPACE_SMPTE170M:
+		csc_table = vop->csc_table->r2y_bt601_12_235;
+		break;
+	case V4L2_COLORSPACE_REC709:
+	case V4L2_COLORSPACE_DEFAULT:
+	case V4L2_COLORSPACE_JPEG:
+		csc_table = vop->csc_table->r2y_bt709;
+		break;
+	case V4L2_COLORSPACE_BT2020:
+		csc_table = vop->csc_table->r2y_bt2020;
+		break;
+	default:
+		csc_table = vop->csc_table->r2y_bt601;
+		break;
+	}
+
+	vop_load_csc_table(vop, vop->win_csc->r2y_offset, csc_table);
+	VOP_WIN_CSC_SET(vop, r2y_en, 1);
+
+	return 0;
+}
+
 static int rockchip_vop_set_plane(struct display_state *state)
 {
 	struct crtc_state *crtc_state = &state->crtc_state;
@@ -373,6 +653,7 @@ static int rockchip_vop_set_plane(struct display_state *state)
 	int crtc_w = crtc_state->crtc_w;
 	int crtc_h = crtc_state->crtc_h;
 	int xvir = crtc_state->xvir;
+	int x_mirror = 0, y_mirror = 0;
 
 	act_info = (src_h - 1) << 16;
 	act_info |= (src_w - 1) & 0xffff;
@@ -380,13 +661,31 @@ static int rockchip_vop_set_plane(struct display_state *state)
 	dsp_info = (crtc_h - 1) << 16;
 	dsp_info |= (crtc_w - 1) & 0xffff;
 
-	dsp_stx = crtc_x + mode->htotal - mode->hsync_start;
-	dsp_sty = crtc_y + mode->vtotal - mode->vsync_start;
+	dsp_stx = crtc_x + mode->crtc_htotal - mode->crtc_hsync_start;
+	dsp_sty = crtc_y + mode->crtc_vtotal - mode->crtc_vsync_start;
 	dsp_st = dsp_sty << 16 | (dsp_stx & 0xffff);
 
-	if (crtc_state->ymirror)
-		crtc_state->dma_addr += (src_h - 1) * xvir * 4;
-	VOP_WIN_SET(vop, ymirror, crtc_state->ymirror);
+	if (mode->flags & DRM_MODE_FLAG_YMIRROR)
+		y_mirror = 1;
+	else
+		y_mirror = 0;
+	if (mode->flags & DRM_MODE_FLAG_XMIRROR)
+		x_mirror = 1;
+	else
+		x_mirror = 0;
+	if (crtc_state->ymirror ^ y_mirror)
+		y_mirror = 1;
+	else
+		y_mirror = 0;
+	if (y_mirror) {
+		if (VOP_CTRL_SUPPORT(vop, ymirror))
+			crtc_state->dma_addr += (src_h - 1) * xvir * 4;
+		else
+			y_mirror = 0;
+		}
+	VOP_CTRL_SET(vop, ymirror, y_mirror);
+	VOP_CTRL_SET(vop, xmirror, x_mirror);
+
 	VOP_WIN_SET(vop, format, crtc_state->format);
 	VOP_WIN_SET(vop, yrgb_vir, xvir);
 	VOP_WIN_SET(vop, yrgb_mst, crtc_state->dma_addr);
@@ -401,6 +700,7 @@ static int rockchip_vop_set_plane(struct display_state *state)
 
 	VOP_WIN_SET(vop, src_alpha_ctl, 0);
 
+	rockchip_vop_setup_csc_table(state);
 	VOP_WIN_SET(vop, enable, 1);
 	vop_cfg_done(vop);
 
@@ -419,6 +719,8 @@ static int rockchip_vop_enable(struct display_state *state)
 
 	VOP_CTRL_SET(vop, standby, 0);
 	vop_cfg_done(vop);
+	if (crtc_state->mcu_timing.mcu_pix_total > 0)
+		VOP_CTRL_SET(vop, mcu_hold_mode, 0);
 
 	return 0;
 }
@@ -435,15 +737,15 @@ static int rockchip_vop_disable(struct display_state *state)
 
 static int rockchip_vop_fixup_dts(struct display_state *state, void *blob)
 {
+#if 0
 	struct crtc_state *crtc_state = &state->crtc_state;
 	struct panel_state *pstate = &state->panel_state;
 	uint32_t phandle;
 	char path[100];
 	int ret, dsp_lut_node;
 
-	if (!pstate->dsp_lut_node)
+	if (!ofnode_valid(pstate->dsp_lut_node))
 		return 0;
-
 	ret = fdt_get_path(state->blob, pstate->dsp_lut_node, path, sizeof(path));
 	if (ret < 0) {
 		printf("failed to get dsp_lut path[%s], ret=%d\n",
@@ -471,6 +773,34 @@ static int rockchip_vop_fixup_dts(struct display_state *state, void *blob)
 	}
 
 	do_fixup_by_path_u32(blob, path, "dsp-lut", phandle, 1);
+#endif
+	return 0;
+}
+
+static int rockchip_vop_send_mcu_cmd(struct display_state *state,
+				     u32 type, u32 value)
+{
+	struct crtc_state *crtc_state = &state->crtc_state;
+	struct vop *vop = crtc_state->private;
+
+	if (vop) {
+		switch (type) {
+		case MCU_WRCMD:
+			VOP_CTRL_SET(vop, mcu_rs, 0);
+			VOP_CTRL_SET(vop, mcu_rw_bypass_port, value);
+			VOP_CTRL_SET(vop, mcu_rs, 1);
+			break;
+		case MCU_WRDATA:
+			VOP_CTRL_SET(vop, mcu_rs, 1);
+			VOP_CTRL_SET(vop, mcu_rw_bypass_port, value);
+			break;
+		case MCU_SETBYPASS:
+			VOP_CTRL_SET(vop, mcu_bypass, value ? 1 : 0);
+			break;
+		default:
+			break;
+		}
+	}
 
 	return 0;
 }
@@ -482,4 +812,5 @@ const struct rockchip_crtc_funcs rockchip_vop_funcs = {
 	.enable = rockchip_vop_enable,
 	.disable = rockchip_vop_disable,
 	.fixup_dts = rockchip_vop_fixup_dts,
+	.send_mcu_cmd = rockchip_vop_send_mcu_cmd,
 };

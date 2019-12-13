@@ -18,6 +18,9 @@ obj-$(CONFIG_SPL_NAND_LOAD) += nand_spl_load.o
 obj-$(CONFIG_SPL_NAND_ECC) += nand_ecc.o
 obj-$(CONFIG_SPL_NAND_BASE) += nand_base.o
 obj-$(CONFIG_SPL_NAND_INIT) += nand.o
+obj-$(CONFIG_SPL_NAND_BBT) += nand_bbt.o
+obj-$(CONFIG_SPL_NAND_IDS) += nand_ids.o
+obj-$(CONFIG_SPL_NAND_UTIL) += nand_util.o
 ifeq ($(CONFIG_SPL_ENV_SUPPORT),y)
 obj-$(CONFIG_ENV_IS_IN_NAND) += nand_util.o
 endif
@@ -66,13 +69,15 @@ obj-$(CONFIG_NAND_OMAP_ELM) += omap_elm.o
 obj-$(CONFIG_NAND_PLAT) += nand_plat.o
 obj-$(CONFIG_NAND_SUNXI) += sunxi_nand.o
 obj-$(CONFIG_NAND_ZYNQ) += zynq_nand.o
-
+obj-$(CONFIG_NAND_ROCKCHIP) += rockchip_nand.o
+obj-$(CONFIG_NAND_ROCKCHIP_V9) += rockchip_nand_v9.o
 else  # minimal SPL drivers
 
 obj-$(CONFIG_NAND_FSL_ELBC) += fsl_elbc_spl.o
 obj-$(CONFIG_NAND_FSL_IFC) += fsl_ifc_spl.o
 obj-$(CONFIG_NAND_MXC) += mxc_nand_spl.o
 obj-$(CONFIG_NAND_MXS) += mxs_nand_spl.o mxs_nand.o
+obj-$(CONFIG_NAND_ROCKCHIP) += rockchip_nand_spl.o
 obj-$(CONFIG_NAND_SUNXI) += sunxi_nand_spl.o
 
 endif # drivers

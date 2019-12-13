@@ -169,6 +169,7 @@ static void udc_disable(struct dwc2_udc *dev)
 	dev->ep0state = WAIT_FOR_SETUP;
 	dev->gadget.speed = USB_SPEED_UNKNOWN;
 	dev->usb_address = 0;
+	dev->connected = 0;
 
 	otg_phy_off(dev);
 }
@@ -835,7 +836,7 @@ int dwc2_udc_probe(struct dwc2_plat_otg_data *pdata)
 			    ROUND(sizeof(struct usb_ctrlrequest),
 				  CONFIG_SYS_CACHELINE_SIZE));
 	if (!usb_ctrl) {
-		error("No memory available for UDC!\n");
+		pr_err("No memory available for UDC!\n");
 		return -ENOMEM;
 	}
 

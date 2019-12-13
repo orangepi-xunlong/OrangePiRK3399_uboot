@@ -63,7 +63,7 @@ obj-$(CONFIG_CMDLINE) += cli_readline.o cli_simple.o
 
 endif # !CONFIG_SPL_BUILD
 
-obj-$(CONFIG_$(SPL_)BOOTSTAGE) += bootstage.o
+obj-$(CONFIG_$(SPL_TPL_)BOOTSTAGE) += bootstage.o
 
 ifdef CONFIG_SPL_BUILD
 obj-$(CONFIG_SPL_DFU_SUPPORT) += dfu.o
@@ -100,15 +100,22 @@ obj-y += malloc_simple.o
 endif
 endif
 obj-y += image.o
-obj-$(CONFIG_ANDROID_BOOT_IMAGE) += image-android.o
+obj-$(CONFIG_$(SPL_TPL_)ANDROID_AB) += android_ab.o
+obj-$(CONFIG_$(SPL_TPL_)ANDROID_BOOT_IMAGE) += image-android.o
+obj-$(CONFIG_$(SPL_TPL_)ANDROID_BOOTLOADER) += android_bootloader.o
 obj-$(CONFIG_$(SPL_TPL_)OF_LIBFDT) += image-fdt.o
 obj-$(CONFIG_$(SPL_TPL_)FIT) += image-fit.o
-obj-$(CONFIG_FIT_EMBED) += boot_fit.o common_fit.o
+obj-$(CONFIG_$(SPL_)MULTI_DTB_FIT) += boot_fit.o common_fit.o
 obj-$(CONFIG_$(SPL_TPL_)FIT_SIGNATURE) += image-sig.o
 obj-$(CONFIG_IO_TRACE) += iotrace.o
 obj-y += memsize.o
 obj-y += stdio.o
 
+ifdef CONFIG_CMD_DTIMG
+obj-y += image-android-dt.o
+endif
+
+obj-$(CONFIG_RKIMG_BOOTLOADER) += boot_rkimg.o
 # This option is not just y/n - it can have a numeric value
 ifdef CONFIG_FASTBOOT_FLASH
 obj-y += image-sparse.o
@@ -120,6 +127,10 @@ obj-y += fb_nand.o
 endif
 endif
 
+ifneq ($(or $(CONFIG_USB_FUNCTION_FASTBOOT),$(CONFIG_UDP_FUNCTION_FASTBOOT)),)
+obj-y += fb_common.o
+endif
+
 ifdef CONFIG_CMD_EEPROM_LAYOUT
 obj-y += eeprom/eeprom_field.o eeprom/eeprom_layout.o
 endif
@@ -128,5 +139,11 @@ obj-y += cli.o
 obj-$(CONFIG_FSL_DDR_INTERACTIVE) += cli_simple.o cli_readline.o
 obj-$(CONFIG_CMD_DFU) += dfu.o
 obj-y += command.o
+obj-$(CONFIG_$(SPL_)LOG) += log.o
+obj-$(CONFIG_$(SPL_)LOG_CONSOLE) += log_console.o
 obj-y += s_record.o
 obj-y += xyzModem.o
+
+obj-$(CONFIG_ANDROID_WRITE_KEYBOX) += write_keybox.o
+obj-$(CONFIG_ANDROID_KEYMASTER_CA) += keymaster.o
+obj-$(CONFIG_ANDROID_KEYMASTER_CA) += attestation_key.o
